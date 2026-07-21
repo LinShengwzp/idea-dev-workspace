@@ -7,12 +7,17 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 
+internal interface TaskSnapshotCache {
+    fun save(snapshot: TaskConfigSnapshot, content: String)
+    fun load(source: Path, scope: TaskScope): TaskConfigSnapshot?
+}
+
 class LastValidSnapshotStore(
     private val parser: TaskTomlParser,
     private val writer: AtomicFileWriter,
     private val cacheRoot: Path,
-) {
-    fun save(snapshot: TaskConfigSnapshot, content: String) {
+) : TaskSnapshotCache {
+    override fun save(snapshot: TaskConfigSnapshot, content: String) {
         writer.write(cachePath(snapshot.sourceFile), content) { candidate ->
             val result = parser.parse(candidate, snapshot.scope, snapshot.sourceFile)
             val parsedSnapshot = (result as? TaskConfigLoadResult.Success)?.snapshot
@@ -22,7 +27,7 @@ class LastValidSnapshotStore(
         }
     }
 
-    fun load(source: Path, scope: TaskScope): TaskConfigSnapshot? {
+    override fun load(source: Path, scope: TaskScope): TaskConfigSnapshot? {
         val path = cachePath(source)
         if (!Files.exists(path)) return null
         return try {
