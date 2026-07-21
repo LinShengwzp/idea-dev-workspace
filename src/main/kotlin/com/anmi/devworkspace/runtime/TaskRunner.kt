@@ -322,6 +322,7 @@ class ProjectTaskRunner(
         prepareTask = preparationService::prepare,
         acquireSession = { task -> sessionManager.acquire(project.locationHash, task) },
     )
+    private val stopService = TaskStopService(registry, sessionManager)
 
     val executions: StateFlow<Map<String, TaskExecution>> = registry.executions
 
@@ -332,6 +333,19 @@ class ProjectTaskRunner(
     ): Result<TaskExecution> = runner.run(task, trigger, context)
 
     fun active(taskId: String): TaskExecution? = registry.active(taskId)
+
+    suspend fun stop(taskId: String): StopResult = stopService.stop(taskId)
+
+    suspend fun forceClose(taskId: String): Result<Unit> = stopService.forceClose(taskId)
+
+    suspend fun ownsTerminal(taskId: String, executionId: String): Boolean =
+        sessionManager.withSession(taskId, executionId) { true } == true
+
+    suspend fun activateTerminal(taskId: String, executionId: String): Boolean =
+        sessionManager.withSession(taskId, executionId) { session ->
+            session.activate()
+            true
+        } == true
 
     override fun dispose() = Unit
 }

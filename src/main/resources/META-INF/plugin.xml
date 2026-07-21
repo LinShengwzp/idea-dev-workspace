@@ -17,6 +17,11 @@
         <projectService
                 serviceInterface="com.anmi.devworkspace.terminal.TerminalGateway"
                 serviceImplementation="com.anmi.devworkspace.terminal.idea262.Idea262TerminalGateway"/>
+        <toolWindow
+                id="Dev Tasks"
+                anchor="right"
+                factoryClass="com.anmi.devworkspace.ui.DevTasksToolWindowFactory"
+                canCloseContents="false"/>
     </extensions>
 
     <actions>
