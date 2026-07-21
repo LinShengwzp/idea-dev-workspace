@@ -3,6 +3,8 @@ package com.anmi.devworkspace.runtime
 import com.anmi.devworkspace.domain.DevTask
 import com.anmi.devworkspace.domain.ResolvedTask
 import com.anmi.devworkspace.domain.RunTrigger
+import com.anmi.devworkspace.domain.TaskExecution
+import com.anmi.devworkspace.domain.TaskFailure
 import com.anmi.devworkspace.domain.TaskScope
 import com.anmi.devworkspace.domain.TaskSource
 import com.anmi.devworkspace.domain.TaskStatus
@@ -33,6 +35,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class TaskRunnerTest {
     @Test
@@ -179,6 +182,47 @@ class TaskRunnerTest {
         val failureText = listOfNotNull(execution.failure?.userMessage, execution.failure?.technicalMessage)
             .joinToString(" ")
         assertFalse(failureText.contains("secret-value"))
+    }
+
+    @Test
+    fun `success or failure transition losing a race to stopping remains stopped`() = runBlocking {
+        for (exitCode in listOf(0, 17)) {
+            val delegate = InMemoryTaskExecutionRegistry(fixedClock)
+            var injectedRace = false
+            val registry = object : TaskExecutionRegistry by delegate {
+                override suspend fun transition(
+                    taskId: String,
+                    expectedExecutionId: String,
+                    status: TaskStatus,
+                    exitCode: Int?,
+                    failure: TaskFailure?,
+                ): Result<TaskExecution> {
+                    if (!injectedRace && status in setOf(TaskStatus.SUCCEEDED, TaskStatus.FAILED)) {
+                        injectedRace = true
+                        delegate.transition(taskId, expectedExecutionId, TaskStatus.STOPPING).getOrThrow()
+                    }
+                    return delegate.transition(taskId, expectedExecutionId, status, exitCode, failure)
+                }
+            }
+            val session = FakeTerminalSession(shellIntegrationReady = false) {
+                emitOutput("__DEV_TASK_BEGIN__:run-race\n__DEV_TASK_EXIT__:run-race:$exitCode\n")
+            }
+            val runner = TaskRunner(
+                registry = registry,
+                prepareTask = { _, _, executionId ->
+                    PreparationResult.Success(preparedTask(executionId, exitDetection = true))
+                },
+                acquireSession = { session },
+                executionIdProvider = { "run-race" },
+                clock = fixedClock,
+            )
+
+            val result = runner.run(task(), RunTrigger.MANUAL, context()).getOrThrow()
+
+            assertTrue(injectedRace)
+            assertEquals(TaskStatus.STOPPED, result.status)
+            assertEquals(TaskStatus.STOPPED, delegate.executions.value.getValue("backend").status)
+        }
     }
 
     private fun task(id: String = "backend") = ResolvedTask(

@@ -209,47 +209,72 @@ internal class TaskRunner(
     private suspend fun completeWithExit(
         execution: TaskExecution,
         exitCode: Int,
-    ): Result<TaskExecution> = if (exitCode == 0) {
-        registry.transition(
-            execution.taskId,
-            execution.executionId,
-            TaskStatus.SUCCEEDED,
-            exitCode = exitCode,
-        )
-    } else {
-        registry.transition(
-            execution.taskId,
-            execution.executionId,
-            TaskStatus.FAILED,
-            exitCode = exitCode,
-            failure = TaskFailure(
-                category = FailureCategory.EXECUTION,
-                userMessage = "Task exited with a non-zero status",
-                technicalMessage = "Task exited with code $exitCode",
-            ),
-        )
+    ): Result<TaskExecution> {
+        finishStopIfRequested(execution)?.let { return it }
+        val result = if (exitCode == 0) {
+            registry.transition(
+                execution.taskId,
+                execution.executionId,
+                TaskStatus.SUCCEEDED,
+                exitCode = exitCode,
+            )
+        } else {
+            registry.transition(
+                execution.taskId,
+                execution.executionId,
+                TaskStatus.FAILED,
+                exitCode = exitCode,
+                failure = TaskFailure(
+                    category = FailureCategory.EXECUTION,
+                    userMessage = "Task exited with a non-zero status",
+                    technicalMessage = "Task exited with code $exitCode",
+                ),
+            )
+        }
+        return finishStopIfRequested(execution) ?: result
     }
 
     private suspend fun fail(
         execution: TaskExecution,
         category: FailureCategory,
         message: String,
-    ): Result<TaskExecution> = registry.transition(
-        execution.taskId,
-        execution.executionId,
-        TaskStatus.FAILED,
-        failure = TaskFailure(category, message, message),
-    )
+    ): Result<TaskExecution> {
+        finishStopIfRequested(execution)?.let { return it }
+        val result = registry.transition(
+            execution.taskId,
+            execution.executionId,
+            TaskStatus.FAILED,
+            failure = TaskFailure(category, message, message),
+        )
+        return finishStopIfRequested(execution) ?: result
+    }
 
     private suspend fun transitionToUnknown(
         execution: TaskExecution,
         message: String,
-    ): Result<TaskExecution> = registry.transition(
-        execution.taskId,
-        execution.executionId,
-        TaskStatus.UNKNOWN,
-        failure = TaskFailure(FailureCategory.STATUS_LOST, message, message),
-    )
+    ): Result<TaskExecution> {
+        finishStopIfRequested(execution)?.let { return it }
+        val result = registry.transition(
+            execution.taskId,
+            execution.executionId,
+            TaskStatus.UNKNOWN,
+            failure = TaskFailure(FailureCategory.STATUS_LOST, message, message),
+        )
+        return finishStopIfRequested(execution) ?: result
+    }
+
+    private suspend fun finishStopIfRequested(execution: TaskExecution): Result<TaskExecution>? {
+        val current = registry.executions.value[execution.taskId]
+        if (current?.executionId != execution.executionId) return null
+        if (current.status == TaskStatus.STOPPED) return Result.success(current)
+        if (current.status != TaskStatus.STOPPING) return null
+        val transitioned = registry.transition(execution.taskId, execution.executionId, TaskStatus.STOPPED)
+        if (transitioned.isSuccess) return transitioned
+        val latest = registry.executions.value[execution.taskId]
+        return latest?.takeIf {
+            it.executionId == execution.executionId && it.status == TaskStatus.STOPPED
+        }?.let(Result.Companion::success) ?: transitioned
+    }
 
     private suspend fun transitionAfterCancellation(execution: TaskExecution) {
         val active = registry.active(execution.taskId) ?: return

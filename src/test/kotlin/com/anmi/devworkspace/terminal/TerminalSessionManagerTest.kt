@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotSame
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class TerminalSessionManagerTest {
@@ -71,6 +72,7 @@ class TerminalSessionManagerTest {
 
         val first = manager.acquire("project-a", task) as FakeSession
         first.emit(TerminalCommandState.SESSION_CLOSED)
+        assertNull(manager.withSession(task.taskId, task.executionId) { it })
         val second = manager.acquire("project-a", task.copy(executionId = "execution-2"))
 
         assertNotSame(first, second)

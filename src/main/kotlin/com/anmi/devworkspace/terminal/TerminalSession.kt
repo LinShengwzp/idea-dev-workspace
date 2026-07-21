@@ -25,6 +25,14 @@ interface TerminalSession {
     suspend fun close()
 }
 
+interface TerminalSessionLookup {
+    suspend fun <T> withSession(
+        taskId: String,
+        executionId: String,
+        action: suspend (TerminalSession) -> T,
+    ): T?
+}
+
 internal class TerminalEventStream {
     private val lock = Any()
     private val subscribers = LinkedHashSet<Channel<TerminalCommandEvent>>()
