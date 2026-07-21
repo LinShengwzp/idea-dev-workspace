@@ -72,6 +72,8 @@ interface TerminalToolWindowTab {
 
 Therefore the view is obtained with `tab.view`. Close the tab with `manager.closeTab(tab)` on the EDT. There is no dedicated experimental `activate()` method on the tab; activation must use the exposed `Content` with the normal tool-window/content-manager API on the EDT.
 
+The public Terminal tool-window ID is `TerminalToolWindowFactory.TOOL_WINDOW_ID` (`"Terminal"`). Activation selects `tab.content` through its standard content manager, then calls `ToolWindowManager.getInstance(project).getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)?.activate(...)` on the EDT.
+
 ## Terminal view and command sending
 
 `com.intellij.terminal.frontend.view.TerminalView` is `@ApiStatus.Experimental` and `@ApiStatus.NonExtendable`. Relevant signatures are:
@@ -119,6 +121,47 @@ The following `TerminalView` members are internal and must not be used by this p
 - `sessionDeferred`
 - `addInputInterceptor(...)`
 - `setTopComponent(...)`
+
+## Output observation without Shell Integration
+
+Build 262 exposes a supported experimental rendered-output path directly from `TerminalView`; it does not require `shellIntegrationDeferred` or the internal session API:
+
+```kotlin
+val outputModels: TerminalOutputModelsSet
+
+interface TerminalOutputModelsSet {
+    val regular: TerminalOutputModel
+    val alternative: TerminalOutputModel
+    val active: StateFlow<TerminalOutputModel>
+}
+
+interface TerminalOutputModel {
+    fun addListener(
+        parentDisposable: Disposable,
+        listener: TerminalOutputModelListener,
+    )
+    fun takeSnapshot(): TerminalOutputModelSnapshot
+    fun getText(start: TerminalOffset, end: TerminalOffset): CharSequence
+}
+
+interface TerminalOutputModelListener {
+    fun afterContentChanged(event: TerminalContentChangeEvent)
+}
+
+interface TerminalContentChangeEvent {
+    val offset: TerminalOffset
+    val oldText: CharSequence
+    val newText: CharSequence
+    val isTypeAhead: Boolean
+    val isTrimming: Boolean
+}
+```
+
+`TerminalView.outputModels`, `TerminalOutputModelsSet`, `TerminalOutputModel`, `TerminalOutputModelListener`, and `TerminalContentChangeEvent` are public and/or `@ApiStatus.Experimental`; none of the members above is `@ApiStatus.Internal`. The two highlighting accessors on `TerminalOutputModel` are internal and are excluded.
+
+`afterContentChanged` supplies incremental rendered-text changes through `newText` even when Shell Integration is unavailable. This is terminal-model text after terminal emulation, not raw PTY bytes and not a guaranteed append-only stream: a marker may be split across events, screen content may be replaced, and regular/alternative output models may switch. It is nevertheless suitable for detecting `__DEV_TASK_BEGIN__:<executionId>` and `__DEV_TASK_EXIT__:<executionId>:<exitCode>` when the plugin observes both output models and feeds non-type-ahead, non-trimming `newText` fragments into a rolling parser that preserves marker fragments across event boundaries.
+
+No reflective access, polling, `TerminalView.sessionDeferred`, session output flows, or other internal output/session types are required or permitted for this path.
 
 ## Shell Integration and command events
 
