@@ -49,9 +49,16 @@ class TaskPreparationService(
     private val executionIdProvider: () -> String = { UUID.randomUUID().toString() },
 ) {
     suspend fun prepare(task: ResolvedTask, context: PreparationContext): PreparationResult =
+        prepare(task, context, executionIdProvider())
+
+    suspend fun prepare(
+        task: ResolvedTask,
+        context: PreparationContext,
+        executionId: String,
+    ): PreparationResult =
         withContext(Dispatchers.IO) {
             try {
-                prepareOnIo(task.effective, context)
+                prepareOnIo(task.effective, context, executionId)
             } catch (failure: PreparationAbort) {
                 PreparationResult.Failure(failure.failure)
             } catch (cancellation: CancellationException) {
@@ -67,7 +74,11 @@ class TaskPreparationService(
             }
         }
 
-    private suspend fun prepareOnIo(task: DevTask, context: PreparationContext): PreparationResult.Success {
+    private suspend fun prepareOnIo(
+        task: DevTask,
+        context: PreparationContext,
+        executionId: String,
+    ): PreparationResult.Success {
         if (!task.enabled) {
             abort(FailureCategory.CONFIGURATION, "Task is disabled", "Task '${task.id}' is disabled")
         }
@@ -95,7 +106,6 @@ class TaskPreparationService(
 
         val preparedEnvironment = resolveEnvironment(task, variables)
         val source = prepareSource(task, variables, context, workingDirectory)
-        val executionId = executionIdProvider()
         val command = if (task.exitDetection) {
             CommandWrapper.wrap(source.wrapperShell, source.command, executionId).text
         } else {

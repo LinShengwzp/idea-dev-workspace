@@ -161,6 +161,10 @@ interface TerminalContentChangeEvent {
 
 `afterContentChanged` supplies incremental rendered-text changes through `newText` even when Shell Integration is unavailable. This is terminal-model text after terminal emulation, not raw PTY bytes and not a guaranteed append-only stream: a marker may be split across events, screen content may be replaced, and regular/alternative output models may switch. It is nevertheless suitable for detecting `__DEV_TASK_BEGIN__:<executionId>` and `__DEV_TASK_EXIT__:<executionId>:<exitCode>` when the plugin observes both output models and feeds non-type-ahead, non-trimming `newText` fragments into a rolling parser that preserves marker fragments across event boundaries.
 
+The Task 10 bytecode check confirmed that this availability is structural, not inferred from the Shell-Integration-enabled sandbox run. `TerminalViewImpl.connectToSession(...)` passes the session directly to `TerminalSessionController.handleEvents(...)`. In `TerminalSessionController.invokeBaseHandler(...)`, every `TerminalContentUpdatedEvent` is sent to the current `TerminalOutputModelController.updateContent(...)`; `TerminalOutputModelControllerImpl.updateContent(...)` then updates the `MutableTerminalOutputModel` that backs the public experimental output model. `TerminalShellIntegrationEventsHandler` is registered separately with `TerminalSessionController.addEventsHandler(...)`, after the base regular and alternate output controllers are constructed. The base content-update route does not read or await `shellIntegrationDeferred`.
+
+Accordingly, Task 10 uses **Path A**: `TerminalOutputModelListener.afterContentChanged(...)` and `TerminalContentChangeEvent.newText` provide supported incremental rendered-output fragments whether or not Shell Integration initializes. The adapter may emit `OUTPUT_CHANGED` from these fragments. This does not claim access to raw PTY bytes; no public or experimental raw-byte stream was found or used.
+
 No reflective access, polling, `TerminalView.sessionDeferred`, session output flows, or other internal output/session types are required or permitted for this path.
 
 ## Shell Integration and command events
