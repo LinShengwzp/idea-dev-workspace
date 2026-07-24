@@ -103,6 +103,7 @@ class LibraryPanel(
     private var records: List<LibrarySearchRecord> = emptyList()
     private var query = LibraryQuery()
     private var pendingReveal: LibraryItemKey? = null
+    private val contextualActions = mutableListOf<PanelAction>()
 
     private val filterPanel = LibraryFilterPanel { updated ->
         query = updated
@@ -172,8 +173,6 @@ class LibraryPanel(
             add(split, BorderLayout.CENTER)
         }
     }
-
-    private val contextualActions = mutableListOf<PanelAction>()
 
     private fun createToolbar(): JComponent {
         val actions = listOf(
