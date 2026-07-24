@@ -1,5 +1,6 @@
 package com.anmi.devworkspace.ui
 
+import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.domain.TaskStatus
 import com.intellij.icons.AllIcons
 import com.intellij.ui.ColoredListCellRenderer
@@ -20,7 +21,12 @@ class TaskListCellRenderer : ColoredListCellRenderer<TaskListItem>() {
         append("  ${value.autoText}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         append("  ${value.scopeText}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         value.favoriteText?.let { append("  $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
-        if (value.hasOverrides) append("  Overrides lower scope", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+        if (value.hasOverrides) {
+            append(
+                "  ${DevWorkspaceBundle.message("task.list.override")}",
+                SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES,
+            )
+        }
         append("  ${value.statusText}", statusAttributes(value.status))
         value.failureText?.let { append("  $it", SimpleTextAttributes.ERROR_ATTRIBUTES) }
     }

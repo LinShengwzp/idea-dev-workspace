@@ -1,5 +1,6 @@
 package com.anmi.devworkspace.ui
 
+import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.config.TaskConfigError
 import com.intellij.icons.AllIcons
 import com.intellij.ui.components.JBLabel
@@ -20,14 +21,16 @@ class TaskConfigErrorPanel(
         isOpaque = false
     }
     private var error: TaskConfigError? = null
-    private val openButton = ActionLink("Open Error Location").also { button ->
+    private val openButton = ActionLink(DevWorkspaceBundle.message("task.config.error.open")).also { button ->
         button.addActionListener { error?.let(openLocation) }
     }
 
     init {
         val actions = JBPanel<JBPanel<*>>().apply {
             add(openButton)
-            add(ActionLink("Reload").also { button -> button.addActionListener { reload() } })
+            add(ActionLink(DevWorkspaceBundle.message("task.config.error.reload")).also { button ->
+                button.addActionListener { reload() }
+            })
         }
         add(
             FormBuilder.createFormBuilder()
@@ -44,7 +47,15 @@ class TaskConfigErrorPanel(
         openButton.isEnabled = error != null
         isVisible = error != null || messages.operationalMessage != null
         details.text = listOfNotNull(
-            error?.let { "${it.sourceFile} — line ${it.line}, column ${it.column}: ${it.message}" },
+            error?.let {
+                DevWorkspaceBundle.message(
+                    "task.config.error.location",
+                    it.sourceFile,
+                    it.line,
+                    it.column,
+                    it.message,
+                )
+            },
             messages.operationalMessage,
         ).joinToString("\n")
         revalidate()

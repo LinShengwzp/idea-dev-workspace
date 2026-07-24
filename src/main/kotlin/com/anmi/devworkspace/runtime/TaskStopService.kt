@@ -122,10 +122,9 @@ class TaskStopService(
     }
 
     private suspend fun forceCloseInternal(taskId: String): Result<Unit> {
-        val execution = registry.active(taskId)
-            ?: run {
-                return sanitizedFailure("Task is not running")
-            }
+        val currentRecord = registry.executions.value[taskId]
+        if (currentRecord?.status == TaskStatus.STOPPED) return Result.success(Unit)
+        val execution = registry.active(taskId) ?: return sanitizedFailure("Task is not running")
         if (execution.status != TaskStatus.STOPPING) {
             return sanitizedFailure("Task is not awaiting force close confirmation")
         }
@@ -144,23 +143,28 @@ class TaskStopService(
                 Unit
             }
             if (closed == null) {
-                restoreAuthorization(key)
-                return sanitizedFailure("Terminal session is not available")
+                forceCloseAuthorizations.remove(key, AuthorizationState.IN_PROGRESS)
+                transitionStopped(execution)
+                return stoppedResult(execution)
             }
             forceCloseAuthorizations.remove(key, AuthorizationState.IN_PROGRESS)
             transitionStopped(execution)
-            val current = registry.executions.value[taskId]
-            if (current?.executionId == execution.executionId && current.status == TaskStatus.STOPPED) {
-                Result.success(Unit)
-            } else {
-                sanitizedFailure("Task execution is no longer current")
-            }
+            stoppedResult(execution)
         } catch (cancellation: CancellationException) {
             restoreAuthorization(key)
             throw cancellation
         } catch (_: Exception) {
             restoreAuthorization(key)
             sanitizedFailure("Terminal session could not be closed")
+        }
+    }
+
+    private fun stoppedResult(execution: TaskExecution): Result<Unit> {
+        val current = registry.executions.value[execution.taskId]
+        return if (current?.executionId == execution.executionId && current.status == TaskStatus.STOPPED) {
+            Result.success(Unit)
+        } else {
+            sanitizedFailure("Task execution is no longer current")
         }
     }
 

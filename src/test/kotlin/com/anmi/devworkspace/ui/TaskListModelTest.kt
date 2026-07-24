@@ -88,14 +88,14 @@ class TaskListModelTest {
     }
 
     @Test
-    fun `action state follows runner stop and exact terminal ownership rules`() {
+    fun `action state follows run and exact terminal ownership rules`() {
         val idle = items(listOf(task("api")), emptyMap()).single()
         val preparing = idle.copy(status = TaskStatus.PREPARING, statusText = "Preparing")
         val stopping = idle.copy(status = TaskStatus.STOPPING, statusText = "Stopping")
 
-        assertEquals(TaskActionState(run = true, stop = false, openTerminal = false), idle.actionState(false))
-        assertEquals(TaskActionState(run = false, stop = true, openTerminal = true), preparing.actionState(true))
-        assertEquals(TaskActionState(run = false, stop = true, openTerminal = false), stopping.actionState(false))
+        assertEquals(TaskActionState(run = true, openTerminal = false), idle.actionState(false))
+        assertEquals(TaskActionState(run = false, openTerminal = true), preparing.actionState(true))
+        assertEquals(TaskActionState(run = false, openTerminal = false), stopping.actionState(false))
     }
 
     @Test
@@ -114,9 +114,9 @@ class TaskListModelTest {
             emptyMap(),
         ).single()
 
-        assertEquals("Auto #4", item.autoText)
-        assertEquals("Project private", item.scopeText)
-        assertEquals("Favorite 2", item.favoriteText)
+        assertEquals("自动 #4", item.autoText)
+        assertEquals("项目私有", item.scopeText)
+        assertEquals("收藏 2", item.favoriteText)
         assertTrue(item.hasOverrides)
     }
 
@@ -209,6 +209,27 @@ class TaskListModelTest {
     }
 
     @Test
+    fun `sent task with closed terminal can be dispatched again by double click`() = runBlocking {
+        val coordinator = TaskInteractionCoordinator()
+        val item = items(
+            listOf(task("api")),
+            mapOf("api" to execution("api", TaskStatus.SUCCEEDED)),
+        ).single()
+        var runs = 0
+
+        coordinator.handleDoubleClick(
+            item,
+            exactExecutionId = "execution-api",
+            canRunInactive = true,
+            ownsTerminal = { _, _ -> false },
+            activateTerminal = { _, _ -> error("must not activate") },
+            runInactive = { runs++ },
+        )
+
+        assertEquals(1, runs)
+    }
+
+    @Test
     fun `exact active execution prevents restart even before presentation updates`() = runBlocking {
         val coordinator = TaskInteractionCoordinator()
         val staleIdleItem = items(listOf(task("api")), emptyMap()).single()
@@ -237,6 +258,7 @@ class TaskListModelTest {
         coordinator.handleDoubleClick(
             staleActiveItem,
             exactExecutionId = null,
+            canRunInactive = true,
             ownsTerminal = { _, _ -> error("must not check ownership") },
             activateTerminal = { _, _ -> error("must not activate") },
             runInactive = { runs++ },

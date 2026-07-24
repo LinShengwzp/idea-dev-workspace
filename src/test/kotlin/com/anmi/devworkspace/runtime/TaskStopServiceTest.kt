@@ -135,6 +135,29 @@ class TaskStopServiceTest {
     }
 
     @Test
+    fun `force close succeeds and stops when authorized session already disappeared`() = runBlocking {
+        val fixture = fixture(TaskStatus.RUNNING)
+        assertIsForceCloseRequired(fixture.service.stop(TASK_ID, timeoutMillis = 0))
+        fixture.lookup.replaceOwner(EXECUTION_ID, null)
+
+        val result = fixture.service.forceClose(TASK_ID)
+
+        assertTrue(result.isSuccess)
+        assertEquals(TaskStatus.STOPPED, fixture.registry.executions.value.getValue(TASK_ID).status)
+    }
+
+    @Test
+    fun `force close is idempotent after execution stopped`() = runBlocking {
+        val fixture = fixture(TaskStatus.RUNNING)
+        assertIsForceCloseRequired(fixture.service.stop(TASK_ID, timeoutMillis = 0))
+
+        assertTrue(fixture.service.forceClose(TASK_ID).isSuccess)
+        assertTrue(fixture.service.forceClose(TASK_ID).isSuccess)
+        assertEquals(1, fixture.session.closeCount)
+        assertEquals(TaskStatus.STOPPED, fixture.registry.executions.value.getValue(TASK_ID).status)
+    }
+
+    @Test
     fun `force close requires a prior stop confirmation`() = runBlocking {
         val fixture = fixture(TaskStatus.RUNNING)
         val stopping = async(start = CoroutineStart.UNDISPATCHED) { fixture.service.stop(TASK_ID) }
@@ -284,29 +307,6 @@ class TaskStopServiceTest {
 
         assertEquals(StopResult.NotRunning, stopping.await())
         assertEquals("new-execution", fixture.registry.active(TASK_ID)?.executionId)
-    }
-
-    @Test
-    fun `stop and runner completion race remains stopped`() = runBlocking {
-        val registry = InMemoryTaskExecutionRegistry()
-        val session = FakeSession()
-        val runner = TaskRunner(
-            registry = registry,
-            prepareTask = { _, _, executionId -> PreparationResult.Success(preparedTask(executionId)) },
-            acquireSession = { session },
-            executionIdProvider = { EXECUTION_ID },
-        )
-        val service = TaskStopService(registry, FakeLookup(session))
-        val running = async { runner.run(resolvedTask(), RunTrigger.MANUAL, context()) }
-        session.executed.await()
-
-        val stopping = async(start = CoroutineStart.UNDISPATCHED) { service.stop(TASK_ID) }
-        session.interrupted.await()
-        session.emit(TerminalCommandState.FINISHED, exitCode = 130)
-
-        assertEquals(StopResult.Stopped, stopping.await())
-        assertEquals(TaskStatus.STOPPED, running.await().getOrThrow().status)
-        assertEquals(TaskStatus.STOPPED, registry.executions.value.getValue(TASK_ID).status)
     }
 
     @Test

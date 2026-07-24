@@ -17,6 +17,8 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
+import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -34,6 +36,7 @@ import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalCommandFinis
 import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalCommandStartedEvent
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.Icon
 
 class Idea262TerminalGateway(
     private val project: Project,
@@ -50,6 +53,7 @@ class Idea262TerminalGateway(
                 .envVariables(preparedTask.environment)
                 .tabName(preparedTask.displayName)
                 .requestFocus(false)
+                .deferSessionStartUntilUiShown(false)
                 .createTab()
         }
         return Idea262TerminalSession(project, tabsManager, tab, preparedTask.displayName)
@@ -70,11 +74,13 @@ private class Idea262TerminalSession(
     private var shellIntegrationInitialized = false
 
     override val id: String = UUID.randomUUID().toString()
+    override val isClosed: Boolean get() = closed.get()
     override val events: Flow<TerminalCommandEvent> = eventStream.events
 
     init {
         Disposer.register(project, listenerDisposable)
         registerOutputListeners()
+        registerTabCloseListener()
         view.coroutineScope.launch {
             view.sessionState.first { it is TerminalViewSessionState.Terminated }
             publishClosed()
@@ -117,6 +123,7 @@ private class Idea262TerminalSession(
     }
 
     override suspend fun close() {
+        if (closed.get()) return
         try {
             withContext(Dispatchers.EDT) {
                 tabsManager.closeTab(tab)
@@ -172,6 +179,19 @@ private class Idea262TerminalSession(
         view.outputModels.alternative.addListener(listenerDisposable, listener)
     }
 
+    private fun registerTabCloseListener() {
+        val manager = tab.content.manager ?: return
+        val listener = object : ContentManagerListener {
+            override fun contentRemoved(event: ContentManagerEvent) {
+                if (event.content === tab.content) publishClosed()
+            }
+        }
+        manager.addContentManagerListener(listener)
+        Disposer.register(listenerDisposable, Disposable {
+            manager.removeContentManagerListener(listener)
+        })
+    }
+
     private fun publish(event: TerminalCommandEvent) {
         if (!closed.get()) eventStream.publish(event)
     }
@@ -191,4 +211,11 @@ private class Idea262TerminalSession(
     private companion object {
         const val CONTROL_C = "\u0003"
     }
+}
+
+object Idea262TerminalUi {
+    fun toolWindowIcon(project: Project): Icon? =
+        ToolWindowManager.getInstance(project)
+            .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
+            ?.icon
 }

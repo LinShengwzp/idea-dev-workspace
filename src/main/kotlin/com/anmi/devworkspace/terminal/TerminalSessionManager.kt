@@ -2,6 +2,7 @@ package com.anmi.devworkspace.terminal
 
 import com.anmi.devworkspace.domain.TerminalPolicy
 import com.anmi.devworkspace.prepare.PreparedTask
+import com.anmi.devworkspace.prepare.ShellType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +12,55 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
+import java.nio.file.Path
+import java.security.MessageDigest
+
+class TerminalLaunchSignature private constructor(
+    val shellType: ShellType,
+    val normalizedWorkingDirectory: Path,
+    private val environmentDigest: String,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is TerminalLaunchSignature &&
+            shellType == other.shellType &&
+            normalizedWorkingDirectory == other.normalizedWorkingDirectory &&
+            environmentDigest == other.environmentDigest
+
+    override fun hashCode(): Int {
+        var result = shellType.hashCode()
+        result = 31 * result + normalizedWorkingDirectory.hashCode()
+        result = 31 * result + environmentDigest.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "TerminalLaunchSignature(shellType=$shellType, normalizedWorkingDirectory=$normalizedWorkingDirectory, environmentDigest=<redacted>)"
+
+    companion object {
+        fun from(task: PreparedTask): TerminalLaunchSignature = TerminalLaunchSignature(
+            shellType = task.shellType,
+            normalizedWorkingDirectory = task.workingDirectory.toAbsolutePath().normalize(),
+            environmentDigest = digest(task.environment),
+        )
+
+        private fun digest(environment: Map<String, String>): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            environment.entries.sortedBy { it.key }.forEach { (key, value) ->
+                digest.updateLengthPrefixed(key)
+                digest.updateLengthPrefixed(value)
+            }
+            return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        }
+
+        private fun MessageDigest.updateLengthPrefixed(value: String) {
+            val bytes = value.toByteArray(StandardCharsets.UTF_8)
+            update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+            update(bytes)
+        }
+    }
+}
 
 class TerminalSessionManager internal constructor(
     private val gateway: TerminalGateway,
@@ -21,8 +71,8 @@ class TerminalSessionManager internal constructor(
         CoroutineScope(SupervisorJob() + Dispatchers.Default),
     )
 
-    private val taskSessions = ConcurrentHashMap<TerminalSessionKey, TerminalSession>()
-    private val sharedSessions = ConcurrentHashMap<String, TerminalSession>()
+    private val taskSessions = ConcurrentHashMap<TerminalSessionKey, CachedSession>()
+    private val sharedSessions = ConcurrentHashMap<String, CachedSession>()
     private val alwaysNewSequences = ConcurrentHashMap<TerminalSessionKey, Int>()
     private val executionSessions = ConcurrentHashMap<String, OwnedSession>()
     private val acquisitionMutex = Mutex()
@@ -46,6 +96,11 @@ class TerminalSessionManager internal constructor(
         action: suspend (TerminalSession) -> T,
     ): T? = acquisitionMutex.withLock {
         val owned = executionSessions[taskId]?.takeIf { it.executionId == executionId } ?: return@withLock null
+        if (owned.session.isClosed) {
+            removeExecutionSessions(owned.session)
+            removeReusableSession(owned.session)
+            return@withLock null
+        }
         action(owned.session)
     }
 
@@ -54,10 +109,19 @@ class TerminalSessionManager internal constructor(
         task: PreparedTask,
     ): TerminalSession {
         val key = TerminalSessionKey(projectKey, task.taskId)
-        return taskSessions[key] ?: gateway.acquire(key, task, task.terminalPolicy).also { session ->
-            taskSessions[key] = session
+        val signature = TerminalLaunchSignature.from(task)
+        taskSessions[key]
+            ?.takeIf { cached -> !cached.session.isClosed && cached.signature == signature }
+            ?.let { return it.session }
+        taskSessions[key]?.let { stale ->
+            taskSessions.remove(key, stale)
+            removeExecutionSessions(stale.session)
+        }
+        return gateway.acquire(key, task, task.terminalPolicy).also { session ->
+            val cached = CachedSession(signature, session)
+            taskSessions[key] = cached
             removeWhenClosed(session) {
-                taskSessions.remove(key, session)
+                taskSessions.remove(key, cached)
                 removeExecutionSessions(session)
             }
         }
@@ -66,18 +130,28 @@ class TerminalSessionManager internal constructor(
     private suspend fun acquireSharedSession(
         projectKey: String,
         task: PreparedTask,
-    ): TerminalSession = sharedSessions[projectKey]
-        ?: gateway.acquire(
+    ): TerminalSession {
+        val signature = TerminalLaunchSignature.from(task)
+        sharedSessions[projectKey]
+            ?.takeIf { cached -> !cached.session.isClosed && cached.signature == signature }
+            ?.let { return it.session }
+        sharedSessions[projectKey]?.let { stale ->
+            sharedSessions.remove(projectKey, stale)
+            removeExecutionSessions(stale.session)
+        }
+        return gateway.acquire(
             TerminalSessionKey(projectKey, SHARED_TASK_ID),
             task.copy(displayName = SHARED_TERMINAL_TITLE),
             task.terminalPolicy,
         ).also { session ->
-            sharedSessions[projectKey] = session
+            val cached = CachedSession(signature, session)
+            sharedSessions[projectKey] = cached
             removeWhenClosed(session) {
-                sharedSessions.remove(projectKey, session)
+                sharedSessions.remove(projectKey, cached)
                 removeExecutionSessions(session)
             }
         }
+    }
 
     private suspend fun acquireNewSession(
         projectKey: String,
@@ -104,6 +178,20 @@ class TerminalSessionManager internal constructor(
             .filter { it.value.session === session }
             .forEach { (taskId, ownership) -> executionSessions.remove(taskId, ownership) }
     }
+
+    private fun removeReusableSession(session: TerminalSession) {
+        taskSessions.entries
+            .filter { it.value.session === session }
+            .forEach { (key, value) -> taskSessions.remove(key, value) }
+        sharedSessions.entries
+            .filter { it.value.session === session }
+            .forEach { (key, value) -> sharedSessions.remove(key, value) }
+    }
+
+    private data class CachedSession(
+        val signature: TerminalLaunchSignature,
+        val session: TerminalSession,
+    )
 
     private data class OwnedSession(val executionId: String, val session: TerminalSession)
 

@@ -78,7 +78,8 @@ internal class TaskRunner(
         context: PreparationContext,
         execution: TaskExecution,
     ): Result<TaskExecution> {
-        val prepared = when (val result = prepareTask(task, context, execution.executionId)) {
+        val launcherTask = task.copy(effective = task.effective.copy(exitDetection = false))
+        val prepared = when (val result = prepareTask(launcherTask, context, execution.executionId)) {
             is PreparationResult.Success -> result.task
             is PreparationResult.Failure -> return registry.transition(
                 taskId = execution.taskId,
@@ -111,7 +112,7 @@ internal class TaskRunner(
         prepared: PreparedTask,
         session: TerminalSession,
     ): Result<TaskExecution> {
-        val shellIntegrationReady = session.awaitReady(SHELL_INTEGRATION_TIMEOUT_MILLIS)
+        session.awaitReady(SHELL_INTEGRATION_TIMEOUT_MILLIS)
 
         registry.transition(
             execution.taskId,
@@ -119,27 +120,17 @@ internal class TaskRunner(
             TaskStatus.RUNNING,
         ).onFailure { return Result.failure(it) }
 
-        if (!prepared.exitDetection) {
-            return try {
-                session.execute(prepared.command)
-                transitionToUnknown(execution, "Exit detection is disabled")
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: Exception) {
-                fail(execution, FailureCategory.TERMINAL, "Command could not be sent to Terminal")
-            }
-        }
-
-        val completion = try {
-            executeAndAwaitCompletion(session, prepared, shellIntegrationReady)
+        return try {
+            session.execute(prepared.command)
+            registry.transition(
+                execution.taskId,
+                execution.executionId,
+                TaskStatus.SUCCEEDED,
+            )
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Exception) {
-            return fail(execution, FailureCategory.TERMINAL, "Terminal command execution failed")
-        }
-        return when (completion) {
-            is Completion.Exited -> completeWithExit(execution, completion.code)
-            Completion.Lost -> transitionToUnknown(execution, "Terminal exit status was lost")
+            fail(execution, FailureCategory.TERMINAL, "Command could not be sent to Terminal")
         }
     }
 

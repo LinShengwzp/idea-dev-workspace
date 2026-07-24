@@ -1,5 +1,6 @@
 package com.anmi.devworkspace.ui
 
+import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.config.TaskConfigError
 import com.anmi.devworkspace.config.TaskConfigurationState
 import com.anmi.devworkspace.domain.ResolvedTask
@@ -17,19 +18,22 @@ data class TaskListItem(
     val failureText: String?,
 ) {
     val displayName: String get() = task.effective.name?.takeIf(String::isNotBlank) ?: task.effective.id
-    val autoText: String get() = task.effective.autoStart?.let { "Auto #${it.order}" } ?: "Manual"
+    val autoText: String get() = task.effective.autoStart?.let {
+        DevWorkspaceBundle.message("task.list.auto", it.order)
+    } ?: DevWorkspaceBundle.message("task.list.manual")
     val scopeText: String get() = when (task.effective.scope) {
-        TaskScope.GLOBAL -> "Global"
-        TaskScope.PROJECT_SHARED -> "Project shared"
-        TaskScope.PROJECT_PRIVATE -> "Project private"
+        TaskScope.GLOBAL -> DevWorkspaceBundle.message("task.list.scope.global")
+        TaskScope.PROJECT_SHARED -> DevWorkspaceBundle.message("task.list.scope.project.shared")
+        TaskScope.PROJECT_PRIVATE -> DevWorkspaceBundle.message("task.list.scope.project.private")
     }
-    val favoriteText: String? get() = task.effective.favoriteSlot?.let { "Favorite $it" }
+    val favoriteText: String? get() = task.effective.favoriteSlot?.let {
+        DevWorkspaceBundle.message("task.list.favorite", it)
+    }
     val hasOverrides: Boolean get() = task.shadowed.isNotEmpty()
 
     fun actionState(ownsActiveTerminal: Boolean): TaskActionState = TaskActionState(
         run = status !in ACTIVE_STATUSES,
-        stop = status in STOPPABLE_STATUSES,
-        openTerminal = status in ACTIVE_STATUSES && ownsActiveTerminal,
+        openTerminal = ownsActiveTerminal,
     )
 
     private companion object {
@@ -39,13 +43,11 @@ data class TaskListItem(
             TaskStatus.RUNNING,
             TaskStatus.STOPPING,
         )
-        val STOPPABLE_STATUSES = ACTIVE_STATUSES
     }
 }
 
 data class TaskActionState(
     val run: Boolean,
-    val stop: Boolean,
     val openTerminal: Boolean,
 )
 
@@ -128,8 +130,8 @@ class TaskListPresentationState(
 object TaskExample {
     fun create(scope: TaskScope): DevTask = DevTask(
         id = "example",
-        name = "Example task",
-        description = "A safe example Dev Task",
+        name = DevWorkspaceBundle.message("task.example.name"),
+        description = DevWorkspaceBundle.message("task.example.description"),
         scope = scope,
         source = TaskSource.InlineCommand("echo Dev Tasks example"),
     )
@@ -179,6 +181,7 @@ class TaskInteractionCoordinator(
     suspend fun handleDoubleClick(
         item: TaskListItem,
         exactExecutionId: String?,
+        canRunInactive: Boolean = false,
         ownsTerminal: suspend (String, String) -> Boolean,
         activateTerminal: suspend (String, String) -> Unit,
         runInactive: () -> Unit,
@@ -186,10 +189,9 @@ class TaskInteractionCoordinator(
         val taskId = item.task.effective.id
         if (exactExecutionId != null) {
             val executionId = exactExecutionId
-            activateExactIfOwned(taskId, executionId, ownsTerminal, activateTerminal)
-            return
+            if (activateExactIfOwned(taskId, executionId, ownsTerminal, activateTerminal)) return
         }
-        runInactive()
+        if (canRunInactive) runInactive()
     }
 
     suspend fun activateExactIfOwned(

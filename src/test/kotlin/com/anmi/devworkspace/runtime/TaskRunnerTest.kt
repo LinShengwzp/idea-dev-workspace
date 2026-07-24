@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import java.io.IOException
 import java.nio.file.Path
 import java.time.Clock
@@ -39,12 +40,9 @@ import kotlin.test.assertTrue
 
 class TaskRunnerTest {
     @Test
-    fun `reserves before preparation and completes from split fallback markers`() = runBlocking {
+    fun `command dispatch immediately succeeds and releases active slot`() = runBlocking {
         val registry = InMemoryTaskExecutionRegistry(fixedClock)
-        val session = FakeTerminalSession(shellIntegrationReady = false) {
-            emitOutput("__DEV_TASK_BEG")
-            emitOutput("IN__:run-1\n__DEV_TASK_EXIT__:run-1:0\n")
-        }
+        val session = FakeTerminalSession(shellIntegrationReady = false) {}
         val runner = TaskRunner(
             registry = registry,
             prepareTask = { _, _, executionId ->
@@ -60,15 +58,17 @@ class TaskRunnerTest {
 
         val execution = assertNotNull(result.getOrNull())
         assertEquals(TaskStatus.SUCCEEDED, execution.status)
-        assertEquals(0, execution.exitCode)
+        assertNull(execution.exitCode)
+        assertNull(registry.active("backend"))
     }
 
     @Test
-    fun `marks execution unknown when exit detection is disabled`() = runBlocking {
+    fun `launcher ignores exit detection compatibility field`() = runBlocking {
         val registry = InMemoryTaskExecutionRegistry(fixedClock)
         val runner = TaskRunner(
             registry = registry,
-            prepareTask = { _, _, executionId ->
+            prepareTask = { resolved, _, executionId ->
+                assertFalse(resolved.effective.exitDetection)
                 PreparationResult.Success(preparedTask(executionId, exitDetection = false))
             },
             acquireSession = { FakeTerminalSession(shellIntegrationReady = true) {} },
@@ -78,11 +78,63 @@ class TaskRunnerTest {
 
         val execution = assertNotNull(runner.run(task(), RunTrigger.MANUAL, context()).getOrNull())
 
-        assertEquals(TaskStatus.UNKNOWN, execution.status)
+        assertEquals(TaskStatus.SUCCEEDED, execution.status)
+        assertNull(registry.active("backend"))
     }
 
     @Test
-    fun `prefers native exit information when shell integration is ready`() = runBlocking {
+    fun `later exit and close events do not replace sent result`() = runBlocking {
+        val registry = InMemoryTaskExecutionRegistry(fixedClock)
+        val session = FakeTerminalSession(shellIntegrationReady = true) {}
+        val runner = TaskRunner(
+            registry = registry,
+            prepareTask = { _, _, executionId ->
+                PreparationResult.Success(preparedTask(executionId, exitDetection = true))
+            },
+            acquireSession = { session },
+            executionIdProvider = { "run-sent" },
+            clock = fixedClock,
+        )
+
+        val sent = runner.run(task(), RunTrigger.MANUAL, context()).getOrThrow()
+        session.emitOutput("__DEV_TASK_BEGIN__:run-sent\n__DEV_TASK_EXIT__:run-sent:17\n")
+        session.emitEvent(TerminalCommandState.FINISHED, exitCode = 17)
+        session.emitEvent(TerminalCommandState.SESSION_CLOSED)
+        yield()
+
+        assertEquals(TaskStatus.SUCCEEDED, sent.status)
+        assertEquals(TaskStatus.SUCCEEDED, registry.executions.value.getValue("backend").status)
+        assertNull(registry.executions.value.getValue("backend").exitCode)
+        assertNull(registry.active("backend"))
+    }
+
+    @Test
+    fun `same task can be dispatched again immediately`() = runBlocking {
+        val registry = InMemoryTaskExecutionRegistry(fixedClock)
+        var sequence = 0
+        val session = FakeTerminalSession(shellIntegrationReady = true) {}
+        val runner = TaskRunner(
+            registry = registry,
+            prepareTask = { _, _, executionId ->
+                PreparationResult.Success(preparedTask(executionId, exitDetection = true))
+            },
+            acquireSession = { session },
+            executionIdProvider = { "run-${++sequence}" },
+            clock = fixedClock,
+        )
+
+        val first = runner.run(task(), RunTrigger.MANUAL, context()).getOrThrow()
+        val second = runner.run(task(), RunTrigger.MANUAL, context()).getOrThrow()
+
+        assertEquals(TaskStatus.SUCCEEDED, first.status)
+        assertEquals("run-1", first.executionId)
+        assertEquals(TaskStatus.SUCCEEDED, second.status)
+        assertEquals("run-2", second.executionId)
+        assertNull(registry.active("backend"))
+    }
+
+    @Test
+    fun `native completion emitted during send does not become an exit result`() = runBlocking {
         val registry = InMemoryTaskExecutionRegistry(fixedClock)
         val session = FakeTerminalSession(shellIntegrationReady = true) {
             emitEvent(TerminalCommandState.FINISHED, exitCode = 99)
@@ -102,7 +154,7 @@ class TaskRunnerTest {
         val execution = assertNotNull(runner.run(task(), RunTrigger.MANUAL, context()).getOrNull())
 
         assertEquals(TaskStatus.SUCCEEDED, execution.status)
-        assertEquals(0, execution.exitCode)
+        assertNull(execution.exitCode)
     }
 
     @Test
@@ -182,47 +234,6 @@ class TaskRunnerTest {
         val failureText = listOfNotNull(execution.failure?.userMessage, execution.failure?.technicalMessage)
             .joinToString(" ")
         assertFalse(failureText.contains("secret-value"))
-    }
-
-    @Test
-    fun `success or failure transition losing a race to stopping remains stopped`() = runBlocking {
-        for (exitCode in listOf(0, 17)) {
-            val delegate = InMemoryTaskExecutionRegistry(fixedClock)
-            var injectedRace = false
-            val registry = object : TaskExecutionRegistry by delegate {
-                override suspend fun transition(
-                    taskId: String,
-                    expectedExecutionId: String,
-                    status: TaskStatus,
-                    exitCode: Int?,
-                    failure: TaskFailure?,
-                ): Result<TaskExecution> {
-                    if (!injectedRace && status in setOf(TaskStatus.SUCCEEDED, TaskStatus.FAILED)) {
-                        injectedRace = true
-                        delegate.transition(taskId, expectedExecutionId, TaskStatus.STOPPING).getOrThrow()
-                    }
-                    return delegate.transition(taskId, expectedExecutionId, status, exitCode, failure)
-                }
-            }
-            val session = FakeTerminalSession(shellIntegrationReady = false) {
-                emitOutput("__DEV_TASK_BEGIN__:run-race\n__DEV_TASK_EXIT__:run-race:$exitCode\n")
-            }
-            val runner = TaskRunner(
-                registry = registry,
-                prepareTask = { _, _, executionId ->
-                    PreparationResult.Success(preparedTask(executionId, exitDetection = true))
-                },
-                acquireSession = { session },
-                executionIdProvider = { "run-race" },
-                clock = fixedClock,
-            )
-
-            val result = runner.run(task(), RunTrigger.MANUAL, context()).getOrThrow()
-
-            assertTrue(injectedRace)
-            assertEquals(TaskStatus.STOPPED, result.status)
-            assertEquals(TaskStatus.STOPPED, delegate.executions.value.getValue("backend").status)
-        }
     }
 
     private fun task(id: String = "backend") = ResolvedTask(

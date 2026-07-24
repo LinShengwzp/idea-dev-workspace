@@ -16,6 +16,7 @@ enum class TerminalCommandState { STARTED, FINISHED, OUTPUT_CHANGED, SESSION_CLO
 interface TerminalSession {
     val id: String
     val title: String
+    val isClosed: Boolean get() = false
     val events: Flow<TerminalCommandEvent>
 
     suspend fun awaitReady(timeoutMillis: Long): Boolean

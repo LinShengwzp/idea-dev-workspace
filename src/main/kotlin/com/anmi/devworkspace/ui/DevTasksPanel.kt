@@ -4,12 +4,15 @@ import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.config.TaskConfigConflictException
 import com.anmi.devworkspace.config.TaskConfigError
 import com.anmi.devworkspace.config.TaskConfigurationService
+import com.anmi.devworkspace.config.TaskConfigurationState
+import com.anmi.devworkspace.config.TaskTomlWriter
+import com.anmi.devworkspace.domain.DevTask
 import com.anmi.devworkspace.domain.RunTrigger
 import com.anmi.devworkspace.domain.TaskScope
 import com.anmi.devworkspace.prepare.OperatingSystem
 import com.anmi.devworkspace.prepare.PreparationContext
 import com.anmi.devworkspace.runtime.ProjectTaskRunner
-import com.anmi.devworkspace.runtime.StopResult
+import com.anmi.devworkspace.terminal.idea262.Idea262TerminalUi
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -19,10 +22,8 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.SearchTextField
@@ -58,10 +59,11 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     }
     private val bannerState = TaskBannerState()
     private val interactionCoordinator = TaskInteractionCoordinator(::inFlightChanged)
+    private val navigation = TaskConfigNavigation(project, ::showOperational)
     private val listModel = DefaultListModel<TaskListItem>()
     private val list = JBList(listModel).apply {
         cellRenderer = TaskListCellRenderer()
-        emptyText.text = "No Dev Tasks configured"
+        emptyText.text = message("task.empty.short")
     }
     private val search = SearchTextField()
     private val cards = CardLayout()
@@ -70,14 +72,24 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private var allItems: List<TaskListItem> = emptyList()
     private var selectedOwnsTerminal = false
 
-    private val newAction = UiAction("New", AllIcons.General.Add) { editEntryPoint("New Task") }
-    private val editAction = UiAction("Edit", AllIcons.Actions.Edit) { editEntryPoint("Edit Task") }
-    private val copyAction = UiAction("Copy", AllIcons.Actions.Copy) { editEntryPoint("Copy Task") }
-    private val deleteAction = UiAction("Delete", AllIcons.General.Remove) { editEntryPoint("Delete Task") }
-    private val runAction = UiAction("Run", AllIcons.Actions.Execute) { selectedItem()?.let(::runTask) }
-    private val stopAction = UiAction("Stop", AllIcons.Actions.Suspend) { selectedItem()?.let(::stopTask) }
-    private val terminalAction = UiAction("Open Terminal", AllIcons.Actions.MenuOpen) { selectedItem()?.let(::openExactTerminal) }
-    private val configAction = UiAction("Open Config", AllIcons.Actions.MenuOpen) { openConfig(selectedItem()?.task?.effective?.scope) }
+    private val newAction = UiAction(message("task.action.new"), AllIcons.General.Add) { openNewEditor() }
+    private val editAction = UiAction(message("task.action.edit"), AllIcons.Actions.Edit) {
+        selectedItem()?.let { openEditor(it.task.effective) }
+    }
+    private val copyAction = UiAction(message("task.action.copy"), AllIcons.Actions.Copy) {
+        selectedItem()?.let { openCopyEditor(it.task.effective) }
+    }
+    private val deleteAction = UiAction(message("task.action.delete"), AllIcons.General.Remove) {
+        selectedItem()?.let { deleteTask(it.task.effective) }
+    }
+    private val runAction = UiAction(message("task.action.run"), AllIcons.Actions.Execute) { selectedItem()?.let(::runTask) }
+    private val terminalAction = UiAction(
+        message("task.action.open.terminal"),
+        Idea262TerminalUi.toolWindowIcon(project) ?: AllIcons.Actions.MenuOpen,
+    ) { selectedItem()?.let(::openExactTerminal) }
+    private val configAction = UiAction(message("task.action.open.config"), AllIcons.Actions.MenuOpen) {
+        openConfig(selectedItem()?.task?.effective?.scope)
+    }
 
     init {
         val toolbarGroup = DefaultActionGroup(
@@ -86,7 +98,6 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             copyAction,
             deleteAction,
             runAction,
-            stopAction,
             terminalAction,
             configAction,
         )
@@ -179,7 +190,6 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             val currentExecutionId = runner.active(item.task.effective.id)?.executionId
             interactionCoordinator.canRun(item, currentExecutionId)
         } == true
-        stopAction.enabled = selectedState?.stop == true
         terminalAction.enabled = selectedState?.openTerminal == true
         newAction.enabled = true
         configAction.enabled = true
@@ -188,11 +198,13 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private fun handleDoubleClick() {
         val selected = selectedItem() ?: return
         val taskId = selected.task.effective.id
-        val exactExecutionId = runner.active(taskId)?.executionId
+        val exactExecutionId = runner.executions.value[taskId]?.executionId
+        val canRunInactive = runner.active(taskId) == null
         scope.launch {
             interactionCoordinator.handleDoubleClick(
                 item = selected,
                 exactExecutionId = exactExecutionId,
+                canRunInactive = canRunInactive,
                 ownsTerminal = runner::ownsTerminal,
                 activateTerminal = { id, executionId -> runner.activateTerminal(id, executionId) },
                 runInactive = { runTask(selected) },
@@ -211,29 +223,9 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         )
     }
 
-    private fun stopTask(item: TaskListItem) {
-        if (!item.actionState(selectedOwnsTerminal).stop) return
-        scope.launch {
-            when (runner.stop(item.task.effective.id)) {
-                is StopResult.ForceCloseRequired -> {
-                    val confirmed = withContext(Dispatchers.EDT) {
-                        Messages.showYesNoDialog(
-                            project,
-                            "The task did not stop. Close its task terminal?",
-                            "Stop Dev Task",
-                            Messages.getWarningIcon(),
-                        ) == Messages.YES
-                    }
-                    if (confirmed) runner.forceClose(item.task.effective.id)
-                }
-                StopResult.NotRunning, StopResult.Stopped -> Unit
-            }
-        }
-    }
-
     private fun openExactTerminal(item: TaskListItem) {
         val taskId = item.task.effective.id
-        val exactExecutionId = runner.active(taskId)?.executionId ?: return
+        val exactExecutionId = runner.executions.value[taskId]?.executionId ?: return
         scope.launch {
             interactionCoordinator.activateExactIfOwned(
                 taskId,
@@ -244,23 +236,17 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
-    private fun editEntryPoint(title: String) {
-        val selectedScope = selectedItem()?.task?.effective?.scope
-        openConfig(selectedScope)
-        showOperational("$title is not available yet. Use the configuration file directly.")
-    }
-
     private fun createEmptyPanel(): JComponent = JBPanel<JBPanel<*>>(BorderLayout()).apply {
-        val message = JBTextArea("No Dev Tasks are configured. Create one or open a configuration file.").apply {
+        val message = JBTextArea(message("task.empty.description")).apply {
             isEditable = false
             isOpaque = false
             lineWrap = true
             wrapStyleWord = true
         }
         val buttons = JBPanel<JBPanel<*>>().apply {
-            add(ActionLink("New Task").also { it.addActionListener { editEntryPoint("New Task") } })
-            add(ActionLink("Create Example Config").also { it.addActionListener { createExampleConfig() } })
-            add(ActionLink("Open Config").also { it.addActionListener { openConfig(null) } })
+            add(ActionLink(message("task.empty.new")).also { it.addActionListener { openNewEditor() } })
+            add(ActionLink(message("task.empty.create.example")).also { it.addActionListener { createExampleConfig() } })
+            add(ActionLink(message("task.empty.open.config")).also { it.addActionListener { openConfig(null) } })
         }
         add(message, BorderLayout.CENTER)
         add(buttons, BorderLayout.SOUTH)
@@ -273,45 +259,223 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 configuration.reload(targetScope)
                 val expectedHash = TaskExample.expectedHash(configuration.state.value, targetScope)
                 if (expectedHash == null) {
-                    showOperational("Reload and repair the configuration before creating the example.")
+                    showOperational(message("task.operation.reload.repair.example"))
                     return@launch
                 }
                 configuration.save(targetScope, listOf(TaskExample.create(targetScope)), expectedHash)
                 clearOperational()
             } catch (conflict: TaskConfigConflictException) {
-                showOperational("The configuration changed externally. Reload it before creating the example.")
+                showOperational(message("task.operation.example.conflict"))
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {
-                showOperational("The example configuration could not be created.")
+                showOperational(message("task.operation.example.failed"))
             }
         }
     }
 
     private fun openConfig(scopeHint: TaskScope?) {
         val targetScope = scopeHint ?: TaskScope.PROJECT_SHARED
-        openPath(configuration.path(targetScope), 1, 1)
+        scope.launch { navigation.open(configuration.path(targetScope)) }
     }
 
     private fun openErrorLocation(error: TaskConfigError) {
-        openPath(error.sourceFile, error.line, error.column)
+        scope.launch { navigation.open(error.sourceFile, error.line, error.column) }
     }
 
-    private fun openPath(path: Path, line: Int, column: Int) {
+    private fun openNewEditor() {
+        launchEditor(EditorMode.NEW, null, TaskEditorState())
+    }
+
+    private fun openEditor(task: DevTask) {
+        launchEditor(EditorMode.EDIT, task, TaskEditorState.from(task))
+    }
+
+    private fun openCopyEditor(task: DevTask) {
         scope.launch {
-            val file = withContext(Dispatchers.IO) {
-                LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
-            }
-            withContext(Dispatchers.EDT) {
-                if (file != null) {
-                    clearOperational()
-                    OpenFileDescriptor(project, file, (line - 1).coerceAtLeast(0), (column - 1).coerceAtLeast(0)).navigate(true)
-                } else {
-                    showOperational("The configuration file does not exist yet.")
-                }
+            configuration.reload()
+            val snapshotState = configuration.state.value
+            val copyId = uniqueCopyId(task.id, task.scope, snapshotState)
+            showEditorLoop(EditorMode.COPY, task, TaskEditorState.from(task).copy(id = copyId), snapshotState)
+        }
+    }
+
+    private fun launchEditor(mode: EditorMode, original: DevTask?, initial: TaskEditorState) {
+        scope.launch {
+            try {
+                configuration.reload()
+                showEditorLoop(mode, original, initial, configuration.state.value)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                showOperational(message("task.operation.editor.failed"))
             }
         }
     }
+
+    private suspend fun showEditorLoop(
+        mode: EditorMode,
+        original: DevTask?,
+        initial: TaskEditorState,
+        initialConfiguration: TaskConfigurationState,
+    ) {
+        var configurationState = initialConfiguration
+        var editorState = initial
+        var editorOriginal = original
+        while (true) {
+            if (configurationState.errors.isNotEmpty()) {
+                showOperational(message("task.operation.reload.repair.edit"))
+                return
+            }
+            val model = TaskEditorModel(editorState, editorSnapshots(configurationState), mode, editorOriginal)
+            val accepted = withContext(Dispatchers.EDT) {
+                val dialog = TaskEditorDialog(
+                    project = project,
+                    initialModel = model,
+                    previewContext = taskPreviewContext(),
+                    showInExplorer = { target -> scope.launch { navigation.showInFileManager(configuration.path(target)) } },
+                    dialogTitle = when (mode) {
+                        EditorMode.NEW -> message("task.editor.title.new")
+                        EditorMode.EDIT -> message("task.editor.title.edit")
+                        EditorMode.COPY -> message("task.editor.title.copy")
+                    },
+                )
+                if (dialog.showAndGet()) dialog.resultModel() else null
+            } ?: return
+            editorState = accepted.state
+            val plan = when (val result = accepted.planSave()) {
+                is PlanResult.Invalid -> {
+                    showOperational(result.issues.firstOrNull()?.message ?: message("task.operation.invalid"))
+                    continue
+                }
+                is PlanResult.Valid -> result.plan
+            }
+            when (savePlan(plan)) {
+                SavePlanResult.SAVED -> return
+                SavePlanResult.RELOAD -> {
+                    configuration.reload()
+                    configurationState = configuration.state.value
+                    if (mode == EditorMode.EDIT && editorOriginal != null) {
+                        val reloaded = configurationState.snapshots[editorOriginal.scope]?.tasks
+                            ?.firstOrNull { it.id == editorOriginal.id }
+                        if (reloaded != null) {
+                            editorOriginal = reloaded
+                            editorState = TaskEditorState.from(reloaded)
+                        }
+                    }
+                }
+                SavePlanResult.FAILED -> return
+            }
+        }
+    }
+
+    private fun deleteTask(task: DevTask) {
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            message("task.delete.message", task.id, scopeText(task.scope)),
+            message("task.delete.title"),
+            Messages.getWarningIcon(),
+        ) == Messages.YES
+        if (!confirmed) return
+        scope.launch {
+            try {
+                configuration.reload()
+                val state = configuration.state.value
+                val current = state.snapshots[task.scope]?.tasks?.firstOrNull { it.id == task.id }
+                if (current == null) {
+                    showOperational(message("task.operation.definition.missing"))
+                    return@launch
+                }
+                val model = TaskEditorModel(TaskEditorState.from(current), editorSnapshots(state), EditorMode.EDIT, current)
+                val plan = (model.planDelete() as? PlanResult.Valid)?.plan ?: return@launch
+                savePlan(plan)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                showOperational(message("task.operation.delete.failed"))
+            }
+        }
+    }
+
+    private suspend fun savePlan(plan: TaskSavePlan): SavePlanResult {
+        val coordinator = TaskSaveCoordinator(
+            save = { mutation -> configuration.save(mutation.scope, mutation.tasks, mutation.expectedHash) },
+            reload = { target -> configuration.reload(target) },
+            choose = {
+                val selected = withContext(Dispatchers.EDT) {
+                    Messages.showDialog(
+                        project,
+                        message("task.conflict.message"),
+                        message("task.conflict.title"),
+                        ConflictChoice.entries.map(::conflictChoiceText).toTypedArray(),
+                        0,
+                        Messages.getWarningIcon(),
+                    )
+                }
+                ConflictChoice.entries.getOrNull(selected) ?: ConflictChoice.RELOAD_AND_EDIT
+            },
+            viewDiff = { mutation ->
+                try {
+                    navigation.showDiff(configuration.path(mutation.scope), TaskTomlWriter().write(mutation.tasks))
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    showOperational(message("task.operation.diff.failed"))
+                }
+            },
+        )
+        val result = try {
+            coordinator.execute(plan)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            configuration.reload()
+            showOperational(message("task.operation.save.failed"))
+            return SavePlanResult.FAILED
+        }
+        when (result) {
+            is SaveExecution.Reloaded -> {
+                if (result.partial) {
+                    showOperational(message("task.operation.partial.conflict"))
+                }
+                return SavePlanResult.RELOAD
+            }
+            SaveExecution.Saved -> Unit
+        }
+        configuration.reload()
+        clearOperational()
+        return SavePlanResult.SAVED
+    }
+
+    private fun editorSnapshots(state: TaskConfigurationState): EditorSnapshots = EditorSnapshots(
+        TaskScope.entries.associateWith { target ->
+            val snapshot = state.snapshots[target]
+            ScopeSnapshot(snapshot?.tasks.orEmpty(), snapshot?.contentHash)
+        },
+    )
+
+    private fun uniqueCopyId(baseId: String, target: TaskScope, state: TaskConfigurationState): String {
+        val existing = state.snapshots[target]?.tasks.orEmpty().mapTo(mutableSetOf()) { it.id }
+        var suffix = 1
+        var candidate = "$baseId-copy"
+        while (candidate in existing) {
+            suffix++
+            candidate = "$baseId-copy-$suffix"
+        }
+        return candidate
+    }
+
+    private fun taskPreviewContext(): TaskPreviewContext = TaskPreviewContext(
+        projectDir = Path.of(requireNotNull(project.basePath)),
+        userHome = Path.of(System.getProperty("user.home")),
+        moduleDir = null,
+        operatingSystem = when {
+            System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> OperatingSystem.WINDOWS
+            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> OperatingSystem.MAC
+            else -> OperatingSystem.LINUX
+        },
+        shellEnvironment = System.getenv("SHELL"),
+    )
 
     private fun showOperational(message: String) {
         if (SwingUtilities.isEventDispatchThread()) {
@@ -357,6 +521,25 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         shellEnvironment = System.getenv("SHELL"),
     )
 
+    private fun scopeText(value: TaskScope): String = message(
+        when (value) {
+            TaskScope.GLOBAL -> "task.editor.scope.global"
+            TaskScope.PROJECT_SHARED -> "task.editor.scope.project.shared"
+            TaskScope.PROJECT_PRIVATE -> "task.editor.scope.project.private"
+        },
+    )
+
+    private fun conflictChoiceText(value: ConflictChoice): String = message(
+        when (value) {
+            ConflictChoice.RELOAD_AND_EDIT -> "task.conflict.reload"
+            ConflictChoice.VIEW_DIFF -> "task.conflict.diff"
+            ConflictChoice.OVERWRITE -> "task.conflict.overwrite"
+        },
+    )
+
+    private fun message(key: String, vararg values: Any): String =
+        DevWorkspaceBundle.message(key, *values)
+
     private inner class UiAction(text: String, icon: javax.swing.Icon, private val invoke: () -> Unit) :
         AnAction(text, null, icon) {
         var enabled: Boolean = true
@@ -374,4 +557,6 @@ class DevTasksPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         const val LIST_CARD = "list"
         const val EMPTY_CARD = "empty"
     }
+
+    private enum class SavePlanResult { SAVED, RELOAD, FAILED }
 }
