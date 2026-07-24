@@ -124,6 +124,7 @@ class LibraryMutationService(
             contentFile = if (type == LibraryItemType.MARKDOWN) "contents/$itemId.md" else null,
             createdAt = created,
             updatedAt = updated,
+            source = source,
         )
 
     private fun LibraryDocument.withItem(item: LibraryItem): LibraryDocument =

@@ -100,7 +100,7 @@ class LibraryQuickAddDialog(
                 .addLabeledComponent(message("library.editor.tags"), tags)
                 .addLabeledComponent(
                     message("library.quick.add.source"),
-                    JBLabel(draft.sourceDescription),
+                    JBLabel(draft.source?.let(::formatSource) ?: draft.sourceDescription),
                 )
                 .addLabeledComponent(message("library.quick.add.preview"), JBScrollPane(preview))
                 .panel.apply { border = JBUI.Borders.empty(8) },
@@ -120,6 +120,7 @@ class LibraryQuickAddDialog(
                 note = draft.sourceDescription,
                 target = draft.target,
                 markdown = draft.markdown,
+                source = draft.source,
             )
 
         private fun updateGroups(selectedScope: LibraryScope, selected: String?) {
@@ -148,5 +149,13 @@ class LibraryQuickAddDialog(
 
     private companion object {
         fun message(key: String): String = DevWorkspaceBundle.message(key)
+
+        fun formatSource(source: com.anmi.devworkspace.library.domain.LibraryItemSource): String =
+            DevWorkspaceBundle.message(
+                "library.quick.add.source.location",
+                source.path,
+                source.startLine ?: "",
+                source.endLine ?: "",
+            )
     }
 }

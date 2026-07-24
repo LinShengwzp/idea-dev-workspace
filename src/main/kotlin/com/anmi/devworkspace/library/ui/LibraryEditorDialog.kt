@@ -29,6 +29,7 @@ class LibraryEditorDialog(
     private val model = LibraryEditorModel()
     private val itemId = initial.id
     private val favorite = initial.favorite
+    private val source = initial.source
     private val availableGroups = groups
     private val titleField = JBTextField(initial.title)
     private val typeField = JComboBox(LibraryItemType.entries.toTypedArray()).apply {
@@ -104,6 +105,7 @@ class LibraryEditorDialog(
             favorite = favorite,
             target = targetField.text,
             markdown = markdownField.text,
+            source = source,
         )
 
     private fun updateGroups(scope: LibraryScope, selected: String?) {

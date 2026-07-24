@@ -1,7 +1,9 @@
 package com.anmi.devworkspace.library.actions
 
+import com.anmi.devworkspace.library.domain.LibraryItemSource
 import com.anmi.devworkspace.library.domain.LibraryItemType
 import com.anmi.devworkspace.library.domain.LibraryScope
+import com.anmi.devworkspace.library.domain.LibrarySourceKind
 import com.anmi.devworkspace.library.files.LibraryPathResolver
 import com.anmi.devworkspace.library.service.LibraryTypeDetector
 import java.nio.file.Path
@@ -24,6 +26,18 @@ data class LibraryQuickAddDraft(
     val sourceDescription: String,
     val target: String? = null,
     val markdown: String? = null,
+    val source: LibraryItemSource? = null,
+)
+
+/**
+ * Explicit candidates captured from the active DataContext, ordered here
+ * rather than inferred from whichever editor happens to remain open.
+ */
+data class LibraryCaptureCandidates(
+    val editorSelection: EditorCapture? = null,
+    val projectFiles: List<EditorCapture> = emptyList(),
+    val focusedEditor: EditorCapture? = null,
+    val clipboard: String? = null,
 )
 
 /** Pure context-to-draft conversion; IntelliJ DataContext access stays in the action adapter. */
@@ -58,6 +72,12 @@ class LibraryContextExtractor(
             type = LibraryItemType.MARKDOWN,
             sourceDescription = "$relative$lines",
             markdown = body,
+            source = LibraryItemSource(
+                kind = LibrarySourceKind.EDITOR_SELECTION,
+                path = storedPath,
+                startLine = capture.startLine,
+                endLine = capture.endLine,
+            ),
         )
     }
 
@@ -73,4 +93,13 @@ class LibraryContextExtractor(
             markdown = value.takeIf { type == LibraryItemType.MARKDOWN },
         )
     }
+
+    fun resolve(candidates: LibraryCaptureCandidates): List<LibraryQuickAddDraft> =
+        when {
+            candidates.editorSelection != null -> listOf(fromEditor(candidates.editorSelection))
+            candidates.projectFiles.isNotEmpty() -> candidates.projectFiles.map(::fromEditor)
+            candidates.focusedEditor != null -> listOf(fromEditor(candidates.focusedEditor))
+            !candidates.clipboard.isNullOrBlank() -> listOf(fromClipboard(candidates.clipboard))
+            else -> emptyList()
+        }
 }

@@ -15,6 +15,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -25,6 +26,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
 import java.awt.datatransfer.DataFlavor
 import java.nio.file.Path
+import javax.swing.SwingUtilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,35 +78,52 @@ class LibraryQuickAddService(
         val base = project.basePath?.let(Path::of) ?: return emptyList()
         val editor = CommonDataKeys.EDITOR.getData(dataContext)
         val editorFile = CommonDataKeys.VIRTUAL_FILE.getData(dataContext)
-        if (editor != null && editorFile != null && !editorFile.isDirectory) {
-            val selection = editor.selectionModel.selectedText
-            val start = editor.selectionModel.selectionStart
-            val end = editor.selectionModel.selectionEnd
-            return listOf(
-                extractor.fromEditor(
-                    EditorCapture(
-                        projectDirectory = base,
-                        file = editorFile.toNioPath(),
-                        selection = selection,
-                        startLine = selection?.let { editor.document.getLineNumber(start) + 1 },
-                        endLine = selection?.let {
-                            editor.document.getLineNumber((end - 1).coerceAtLeast(start)) + 1
-                        },
-                        language = selection?.let { language(editorFile) },
-                    ),
-                ),
-            )
+        val contextComponent = PlatformCoreDataKeys.CONTEXT_COMPONENT.getData(dataContext)
+        val focusedEditor = editor != null &&
+            contextComponent != null &&
+            SwingUtilities.isDescendingFrom(contextComponent, editor.component)
+        val editorCapture = if (focusedEditor && editorFile?.isDirectory == false) {
+            captureEditor(base, editor, editorFile)
+        } else {
+            null
         }
-        val files = CommonDataKeys.VIRTUAL_FILE_ARRAY.getData(dataContext)
-            ?.filterNot(VirtualFile::isDirectory)
-            .orEmpty()
-        if (files.isNotEmpty()) {
-            return files.map { file ->
-                extractor.fromEditor(EditorCapture(base, file.toNioPath()))
-            }
+        val selectedFiles = if (focusedEditor) {
+            emptyList()
+        } else {
+            CommonDataKeys.VIRTUAL_FILE_ARRAY.getData(dataContext)
+                ?.filterNot(VirtualFile::isDirectory)
+                .orEmpty()
+                .map { file -> EditorCapture(base, file.toNioPath()) }
         }
         val clipboard = CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor) as? String
-        return clipboard?.takeIf(String::isNotBlank)?.let { listOf(extractor.fromClipboard(it)) }.orEmpty()
+        return extractor.resolve(
+            LibraryCaptureCandidates(
+                editorSelection = editorCapture?.takeIf { it.selection != null },
+                projectFiles = selectedFiles,
+                focusedEditor = editorCapture?.takeIf { it.selection == null },
+                clipboard = clipboard,
+            ),
+        )
+    }
+
+    private fun captureEditor(
+        base: Path,
+        editor: com.intellij.openapi.editor.Editor,
+        file: VirtualFile,
+    ): EditorCapture {
+        val selection = editor.selectionModel.selectedText
+        val start = editor.selectionModel.selectionStart
+        val end = editor.selectionModel.selectionEnd
+        return EditorCapture(
+            projectDirectory = base,
+            file = file.toNioPath(),
+            selection = selection,
+            startLine = selection?.let { editor.document.getLineNumber(start) + 1 },
+            endLine = selection?.let {
+                editor.document.getLineNumber((end - 1).coerceAtLeast(start)) + 1
+            },
+            language = selection?.let { language(file) },
+        )
     }
 
     private fun openFullEditor(initial: LibraryEditorState) {

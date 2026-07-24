@@ -429,6 +429,7 @@ class LibraryPanel(
             favorite = favorite,
             target = target,
             markdown = markdown,
+            source = source,
         )
 
     private inner class PanelAction(

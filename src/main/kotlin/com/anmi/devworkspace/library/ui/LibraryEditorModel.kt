@@ -1,5 +1,6 @@
 package com.anmi.devworkspace.library.ui
 
+import com.anmi.devworkspace.library.domain.LibraryItemSource
 import com.anmi.devworkspace.library.domain.LibraryItemType
 import com.anmi.devworkspace.library.domain.LibraryScope
 
@@ -14,6 +15,7 @@ data class LibraryEditorState(
     val favorite: Boolean = false,
     val target: String? = null,
     val markdown: String? = null,
+    val source: LibraryItemSource? = null,
 )
 
 enum class LibraryEditorField {
