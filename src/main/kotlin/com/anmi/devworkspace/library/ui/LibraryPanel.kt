@@ -113,10 +113,13 @@ class LibraryPanel(
     private var pendingReveal: LibraryItemKey? = null
     private val contextualActions = mutableListOf<PanelAction>()
 
-    private val filterPanel = LibraryFilterPanel { updated ->
-        query = updated
-        render()
-    }
+    private val filterPanel = LibraryFilterPanel(
+        changed = { updated ->
+            query = updated
+            render()
+        },
+        clearSearch = { search.text = "" },
+    )
 
     init {
         setToolbar(createToolbar())
@@ -219,6 +222,7 @@ class LibraryPanel(
                 val nextRecords = records(state)
                 withContext(Dispatchers.EDT) {
                     records = nextRecords
+                    filterPanel.updateOptions(nextRecords)
                     errorBanner.isVisible = state.errors.isNotEmpty()
                     errorBanner.toolTipText = state.errors.values.joinToString("<br>", "<html>", "</html>") {
                         "${it.sourceFile}: ${it.message}"
@@ -293,6 +297,7 @@ class LibraryPanel(
             val refreshedRecords = records(library.state.value)
             withContext(Dispatchers.EDT) {
                 records = refreshedRecords
+                filterPanel.updateOptions(refreshedRecords)
                 pendingReveal = selectedKey
                 render()
             }

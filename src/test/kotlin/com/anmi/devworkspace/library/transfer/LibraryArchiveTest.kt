@@ -120,6 +120,50 @@ class LibraryArchiveTest {
         }
 
     @Test
+    fun `version 1 archive imports through shared codec`() =
+        withTemporaryDirectory { root ->
+            val repository = FakeRepository(
+                LibraryScope.PROJECT_PRIVATE,
+                root.resolve("target"),
+                LibraryDocument(),
+            )
+            val archive = root.resolve("legacy.zip")
+            writeRawArchive(
+                archive = archive,
+                manifest = LibraryArchiveManifest(1, Instant.EPOCH, LibraryScope.GLOBAL),
+                libraryJson = """
+                    {
+                      "version": 1,
+                      "groups": [],
+                      "items": [{
+                        "id": "legacy",
+                        "title": "Legacy",
+                        "type": "MARKDOWN",
+                        "groupId": null,
+                        "tags": [],
+                        "note": null,
+                        "favorite": false,
+                        "target": null,
+                        "contentFile": "contents/legacy.md",
+                        "createdAt": "2026-07-24T08:00:00Z",
+                        "updatedAt": "2026-07-24T09:00:00Z"
+                      }]
+                    }
+                """.trimIndent(),
+                bodies = mapOf("legacy" to "legacy body"),
+            )
+
+            LibraryImporter(mapOf(repository.scope to repository))
+                .importArchive(archive, repository.scope)
+
+            val imported = repository.document.items.single()
+            assertEquals("legacy", imported.id)
+            assertEquals(null, imported.source)
+            assertEquals(LibraryScope.PROJECT_PRIVATE, imported.scope)
+            assertEquals("legacy body", Files.readString(repository.root.resolve("contents/legacy.md")))
+        }
+
+    @Test
     fun `path traversal entry is rejected before repository modification`() =
         withTemporaryDirectory { root ->
             val repository = FakeRepository(LibraryScope.GLOBAL, root.resolve("target"), LibraryDocument())

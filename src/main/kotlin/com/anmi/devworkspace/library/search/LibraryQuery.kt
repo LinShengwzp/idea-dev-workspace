@@ -38,6 +38,8 @@ data class LibraryQuery(
     val scopes: Set<LibraryScope> = emptySet(),
     val types: Set<LibraryItemType> = emptySet(),
     val groupIds: Set<String> = emptySet(),
+    val groupNames: Set<String> = emptySet(),
+    val includeUngrouped: Boolean = false,
     val tags: Set<String> = emptySet(),
     val favoriteOnly: Boolean = false,
     val pathStates: Set<LibraryPathState> = emptySet(),

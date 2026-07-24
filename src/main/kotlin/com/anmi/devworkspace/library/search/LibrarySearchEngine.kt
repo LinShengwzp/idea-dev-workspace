@@ -10,11 +10,21 @@ class LibrarySearchEngine {
     ): List<LibrarySearchRecord> {
         val normalizedText = query.text.trim().lowercase(Locale.ROOT)
         val normalizedTags = query.tags.mapTo(hashSetOf()) { it.lowercase(Locale.ROOT) }
+        val normalizedGroups = query.groupNames.mapTo(hashSetOf()) {
+            it.trim().lowercase(Locale.ROOT)
+        }
         return records.asSequence()
             .filter { record -> normalizedText.isEmpty() || record.contains(normalizedText) }
             .filter { record -> query.scopes.isEmpty() || record.item.scope in query.scopes }
             .filter { record -> query.types.isEmpty() || record.item.type in query.types }
-            .filter { record -> query.groupIds.isEmpty() || record.item.groupId in query.groupIds }
+            .filter { record ->
+                val groupFilterActive =
+                    query.groupIds.isNotEmpty() || normalizedGroups.isNotEmpty() || query.includeUngrouped
+                !groupFilterActive ||
+                    record.item.groupId in query.groupIds ||
+                    record.groupName?.trim()?.lowercase(Locale.ROOT) in normalizedGroups ||
+                    query.includeUngrouped && record.item.groupId == null
+            }
             .filter { record ->
                 normalizedTags.isEmpty() ||
                     record.item.tags.any { it.lowercase(Locale.ROOT) in normalizedTags }

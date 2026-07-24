@@ -119,6 +119,46 @@ class LibrarySearchEngineTest {
     }
 
     @Test
+    fun `same-name groups across scopes match one visual group`() {
+        val records = listOf(
+            record(
+                item("global", scope = LibraryScope.GLOBAL),
+                groupId = "global-docs",
+                groupName = " Docs ",
+            ),
+            record(
+                item("private", scope = LibraryScope.PROJECT_PRIVATE),
+                groupId = "private-docs",
+                groupName = "docs",
+            ),
+            record(item("other"), groupId = "other", groupName = "Other"),
+        )
+
+        assertEquals(
+            setOf("global", "private"),
+            engine.search(records, LibraryQuery(groupNames = setOf("DOCS")))
+                .mapTo(linkedSetOf()) { it.item.id },
+        )
+    }
+
+    @Test
+    fun `ungrouped participates in group dimension OR logic`() {
+        val records = listOf(
+            record(item("docs"), groupId = "docs", groupName = "Docs"),
+            record(item("ungrouped")),
+            record(item("other"), groupId = "other", groupName = "Other"),
+        )
+
+        assertEquals(
+            setOf("docs", "ungrouped"),
+            engine.search(
+                records,
+                LibraryQuery(groupNames = setOf("docs"), includeUngrouped = true),
+            ).mapTo(linkedSetOf()) { it.item.id },
+        )
+    }
+
+    @Test
     fun `default sort is favorite group order recent update then deterministic identity`() {
         val records = listOf(
             record(item("z", updatedAt = instant(3)), groupOrder = 20),
