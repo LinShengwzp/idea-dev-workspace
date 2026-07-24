@@ -10,6 +10,7 @@ data class LibraryDocument(
     val items: List<LibraryItem> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_VERSION: Int = 1
+        const val LEGACY_VERSION: Int = 1
+        const val CURRENT_VERSION: Int = 2
     }
 }

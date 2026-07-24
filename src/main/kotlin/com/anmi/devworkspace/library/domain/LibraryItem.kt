@@ -21,4 +21,5 @@ data class LibraryItem(
     val contentFile: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val source: LibraryItemSource? = null,
 )

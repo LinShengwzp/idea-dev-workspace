@@ -2,8 +2,10 @@ package com.anmi.devworkspace.library.storage
 
 import com.anmi.devworkspace.library.domain.LibraryGroup
 import com.anmi.devworkspace.library.domain.LibraryItem
+import com.anmi.devworkspace.library.domain.LibraryItemSource
 import com.anmi.devworkspace.library.domain.LibraryItemType
 import com.anmi.devworkspace.library.domain.LibraryScope
+import com.anmi.devworkspace.library.domain.LibrarySourceKind
 import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -22,12 +24,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * Encodes the stable version-1 `library.json` schema.
+ * Reads legacy v1 and current v2 documents, but always emits v2.
  *
  * Repository scope is intentionally not serialized: a repository is the
  * authority for scope, which prevents imported JSON from claiming another
- * storage layer. Collections and tags are sorted before encoding so equal
- * documents always produce equal text.
+ * storage layer. The v1-to-v2 migration is in-memory only: item IDs and
+ * Markdown body paths remain untouched. Collections and tags are sorted
+ * before encoding so equal documents always produce equal text.
  */
 class LibraryJsonCodec {
     private val json = Json {
@@ -35,21 +38,24 @@ class LibraryJsonCodec {
     }
 
     fun encode(document: LibraryDocument): String {
-        val normalized = validateAndNormalize(document)
+        require(document.version == LibraryDocument.LEGACY_VERSION || document.version == LibraryDocument.CURRENT_VERSION) {
+            "Unsupported library document version: ${document.version}"
+        }
+        val normalized = validateAndNormalize(document.copy(version = LibraryDocument.CURRENT_VERSION))
         return json.encodeToString(JsonElement.serializer(), normalized.toJson())
     }
 
     fun decode(content: String, scope: LibraryScope): LibraryDocument {
         val root = parseObject(content)
         val version = root.required("version").jsonPrimitive.int
-        require(version == LibraryDocument.CURRENT_VERSION) {
+        require(version == LibraryDocument.LEGACY_VERSION || version == LibraryDocument.CURRENT_VERSION) {
             "Unsupported library document version: $version"
         }
 
         val document = LibraryDocument(
-            version = version,
+            version = LibraryDocument.CURRENT_VERSION,
             groups = root.requiredArray("groups").map { it.jsonObject.toGroup(scope) },
-            items = root.requiredArray("items").map { it.jsonObject.toItem(scope) },
+            items = root.requiredArray("items").map { it.jsonObject.toItem(scope, version) },
         )
         return validateAndNormalize(document)
     }
@@ -127,6 +133,14 @@ class LibraryJsonCodec {
         putNullable("contentFile", contentFile)
         put("createdAt", createdAt.toString())
         put("updatedAt", updatedAt.toString())
+        put("source", source?.toJson() ?: JsonNull)
+    }
+
+    private fun LibraryItemSource.toJson(): JsonObject = buildJsonObject {
+        put("kind", kind.name)
+        put("path", path)
+        putNullable("startLine", startLine)
+        putNullable("endLine", endLine)
     }
 
     private fun JsonObject.toGroup(scope: LibraryScope): LibraryGroup = LibraryGroup(
@@ -137,7 +151,7 @@ class LibraryJsonCodec {
         scope = scope,
     )
 
-    private fun JsonObject.toItem(scope: LibraryScope): LibraryItem = LibraryItem(
+    private fun JsonObject.toItem(scope: LibraryScope, version: Int): LibraryItem = LibraryItem(
         id = requiredString("id"),
         title = requiredString("title"),
         type = parseItemType(requiredString("type")),
@@ -152,7 +166,20 @@ class LibraryJsonCodec {
         contentFile = optionalString("contentFile"),
         createdAt = parseInstant(requiredString("createdAt"), "createdAt"),
         updatedAt = parseInstant(requiredString("updatedAt"), "updatedAt"),
+        source = if (version == LibraryDocument.CURRENT_VERSION) optionalSource() else null,
     )
+
+    private fun JsonObject.optionalSource(): LibraryItemSource? {
+        val value = get("source") ?: return null
+        if (value is JsonNull) return null
+        val source = value.jsonObject
+        return LibraryItemSource(
+            kind = parseSourceKind(source.requiredString("kind")),
+            path = source.requiredString("path"),
+            startLine = source.optionalInt("startLine"),
+            endLine = source.optionalInt("endLine"),
+        )
+    }
 
     private fun parseObject(content: String): JsonObject =
         try {
@@ -166,6 +193,13 @@ class LibraryJsonCodec {
             LibraryItemType.valueOf(value)
         } catch (exception: IllegalArgumentException) {
             throw IllegalArgumentException("Unknown library item type: $value", exception)
+        }
+
+    private fun parseSourceKind(value: String): LibrarySourceKind =
+        try {
+            LibrarySourceKind.valueOf(value)
+        } catch (exception: IllegalArgumentException) {
+            throw IllegalArgumentException("Unknown library source kind: $value", exception)
         }
 
     private fun parseInstant(value: String, field: String): Instant =
@@ -189,7 +223,17 @@ class LibraryJsonCodec {
         return value.jsonPrimitive.contentOrNull
     }
 
+    private fun JsonObject.optionalInt(key: String): Int? {
+        val value = get(key) ?: return null
+        if (value is JsonNull) return null
+        return value.jsonPrimitive.int
+    }
+
     private fun kotlinx.serialization.json.JsonObjectBuilder.putNullable(key: String, value: String?) {
+        put(key, value?.let(::JsonPrimitive) ?: JsonNull)
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putNullable(key: String, value: Int?) {
         put(key, value?.let(::JsonPrimitive) ?: JsonNull)
     }
 }

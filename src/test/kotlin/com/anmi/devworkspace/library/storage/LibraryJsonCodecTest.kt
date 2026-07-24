@@ -96,7 +96,7 @@ class LibraryJsonCodecTest {
     fun `unknown version is rejected`() {
         assertFailsWith<IllegalArgumentException> {
             codec.decode(
-                """{"version":2,"groups":[],"items":[]}""",
+                """{"version":3,"groups":[],"items":[]}""",
                 LibraryScope.GLOBAL,
             )
         }
