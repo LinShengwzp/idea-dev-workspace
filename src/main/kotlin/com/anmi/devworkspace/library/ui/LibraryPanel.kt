@@ -2,6 +2,7 @@ package com.anmi.devworkspace.library.ui
 
 import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.library.search.LibraryQuery
+import com.anmi.devworkspace.library.search.LibraryRecordLoader
 import com.anmi.devworkspace.library.search.LibrarySearchEngine
 import com.anmi.devworkspace.library.search.LibrarySearchRecord
 import com.anmi.devworkspace.library.domain.LibraryItem
@@ -72,6 +73,13 @@ class LibraryPanel(
     private val imagePreview = ImagePreviewService()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val presentation = LibraryListModel(LibrarySearchEngine())
+    private val recordLoader = LibraryRecordLoader(
+        readMarkdown = { scope, itemId ->
+            MarkdownContentStore(library.path(scope).parent).read(itemId)
+        },
+        pathState = fileStatus::check,
+        sourcePathState = fileStatus::checkSource,
+    )
     private val listModel = DefaultListModel<LibraryListItem>()
     private val list = JBList(listModel).apply {
         cellRenderer = LibraryItemRenderer()
@@ -188,9 +196,7 @@ class LibraryPanel(
                 selectedItem()?.let { selected -> coroutineScope.launch { mutations.toggleFavorite(selected) } }
             },
             PanelAction("library.action.open", AllIcons.Actions.MenuOpen, requiresSelection = true) { openSelected() },
-            PanelAction("library.action.relocate", AllIcons.Actions.MenuOpen, requiresSelection = true) {
-                selectedItem()?.let(::relocate)
-            },
+            PanelAction("library.action.refresh", AllIcons.Actions.Refresh) { refreshLibrary() },
             PanelAction("library.action.import", AllIcons.ToolbarDecorator.Import) { importArchive() },
             PanelAction("library.action.export", AllIcons.ToolbarDecorator.Export) { exportArchive() },
             PanelAction("library.action.delete", AllIcons.General.Remove, requiresSelection = true) {
@@ -224,21 +230,7 @@ class LibraryPanel(
     }
 
     private suspend fun records(state: LibraryState): List<LibrarySearchRecord> {
-        val groups = state.groups.associateBy { it.scope to it.id }
-        return state.items.map { item ->
-            val group = item.groupId?.let { id -> groups[item.scope to id] }
-            LibrarySearchRecord(
-                item = item,
-                groupName = group?.name,
-                groupOrder = group?.order ?: Int.MAX_VALUE,
-                markdownBody = if (item.type == LibraryItemType.MARKDOWN) {
-                    MarkdownContentStore(library.path(item.scope).parent).read(item.id)
-                } else {
-                    null
-                },
-                pathState = fileStatus.check(item),
-            )
-        }
+        return recordLoader.load(state)
     }
 
     private fun render() {
@@ -288,6 +280,21 @@ class LibraryPanel(
                     }
                 }
                 else -> Unit
+            }
+        }
+    }
+
+    private fun refreshLibrary() {
+        val selectedKey = list.selectedValue?.key
+        coroutineScope.launch {
+            // Repositories, bodies, file status, and decoded images form one refresh boundary.
+            imagePreview.clear()
+            library.refresh()
+            val refreshedRecords = records(library.state.value)
+            withContext(Dispatchers.EDT) {
+                records = refreshedRecords
+                pendingReveal = selectedKey
+                render()
             }
         }
     }
@@ -392,15 +399,6 @@ class LibraryPanel(
                 }
             }
         }
-    }
-
-    private fun relocate(item: LibraryItem) {
-        if (item.type == LibraryItemType.MARKDOWN || item.type == LibraryItemType.LINK) return
-        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
-        val selected = FileChooser.chooseFile(descriptor, project, null) ?: return
-        val base = project.basePath?.let(java.nio.file.Path::of) ?: return
-        val target = LibraryPathResolver(base).persist(selected.toNioPath())
-        coroutineScope.launch { mutations.relocate(item, target) }
     }
 
     private fun delete(item: LibraryItem) {

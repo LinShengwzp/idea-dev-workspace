@@ -45,6 +45,24 @@ class LibraryListModelTest {
         assertEquals(-1, model.selectionIndex(listOf(first), second.key))
     }
 
+    @Test
+    fun `refresh preserves query value and restores an existing selected key`() {
+        val query = LibraryQuery(text = "guide")
+        val selected = LibraryListItem(
+            item("selected", "Guide", LibraryScope.PROJECT_PRIVATE, null),
+            null,
+            null,
+        )
+
+        val refreshedRows = model.present(
+            listOf(LibrarySearchRecord(selected.item)),
+            query,
+        )
+
+        assertEquals(query, query.copy())
+        assertEquals(0, model.selectionIndex(refreshedRows, selected.key))
+    }
+
     private fun group(id: String, name: String, scope: LibraryScope, order: Int) =
         LibraryGroup(id, name, null, order, scope)
 

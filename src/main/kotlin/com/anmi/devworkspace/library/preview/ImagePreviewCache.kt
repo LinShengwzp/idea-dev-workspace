@@ -68,11 +68,13 @@ class ImagePreviewCache(
         @Synchronized get() = entries.size
 
     @Synchronized
-    override fun close() {
+    fun clear() {
         entries.values.forEach(BufferedImage::flush)
         entries.clear()
         pixels = 0
     }
+
+    override fun close() = clear()
 
     private fun remove(key: ImagePreviewKey) {
         entries.remove(key)?.let { image ->

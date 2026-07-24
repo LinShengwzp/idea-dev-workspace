@@ -51,6 +51,13 @@ class ImagePreviewService(
 
     val cacheSize: Int get() = cache.size
 
+    /** Drops decoded previews so an explicit refresh cannot reuse stale pixels. */
+    fun clear() {
+        synchronized(lifecycleLock) {
+            if (!disposed) cache.clear()
+        }
+    }
+
     suspend fun load(path: Path, requestedSize: ImagePreviewSize): ImagePreview =
         withContext(ioDispatcher) {
             if (disposed) return@withContext ImagePreview.Placeholder(ImagePlaceholderReason.DISPOSED)

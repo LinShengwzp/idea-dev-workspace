@@ -25,6 +25,19 @@ import kotlin.test.assertTrue
 
 class LibraryServiceTest {
     @Test
+    fun `manual refresh reloads every scope without saving`() = runBlocking {
+        val repositories = repositories()
+        val service = LibraryService(CoroutineScope(coroutineContext), repositories.values.toList())
+
+        service.refresh()
+
+        assertEquals(1, repositories.values.minOf { it.loadCount })
+        assertEquals(1, repositories.values.maxOf { it.loadCount })
+        assertEquals(0, repositories.values.sumOf { it.saveCount })
+        service.dispose()
+    }
+
+    @Test
     fun `all scopes merge without overriding same IDs or titles`() = runBlocking {
         val repositories = LibraryScope.entries.map { scope ->
             FakeRepository(
@@ -276,10 +289,18 @@ class LibraryServiceTest {
     ) : LibraryRepository {
         override val root: Path = Path.of("D:/${scope.name.lowercase()}")
         override val path: Path = root.resolve("library.json")
+        var loadCount: Int = 0
+            private set
+        var saveCount: Int = 0
+            private set
 
-        override suspend fun load(): LibraryLoadResult = result
+        override suspend fun load(): LibraryLoadResult {
+            loadCount++
+            return result
+        }
 
         override suspend fun save(document: LibraryDocument): LibrarySnapshot {
+            saveCount++
             val saved = LibrarySnapshot(
                 scope = scope,
                 document = document,

@@ -94,6 +94,11 @@ class LibraryService private constructor(
         reload(scope?.let(::setOf) ?: LibraryScope.entries.toSet())
     }
 
+    /** Explicit user refresh boundary that reloads every repository scope. */
+    suspend fun refresh() {
+        reload()
+    }
+
     suspend fun save(scope: LibraryScope, document: LibraryDocument): LibrarySnapshot =
         mutex.withLock {
             val snapshot = withContext(Dispatchers.IO) {

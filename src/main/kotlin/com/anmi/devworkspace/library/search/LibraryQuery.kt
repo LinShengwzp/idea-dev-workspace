@@ -23,6 +23,7 @@ data class LibrarySearchRecord(
     val groupOrder: Int = Int.MAX_VALUE,
     val markdownBody: String? = null,
     val pathState: LibraryPathState = LibraryPathState.NOT_APPLICABLE,
+    val sourcePathState: LibraryPathState = LibraryPathState.NOT_APPLICABLE,
 )
 
 /**

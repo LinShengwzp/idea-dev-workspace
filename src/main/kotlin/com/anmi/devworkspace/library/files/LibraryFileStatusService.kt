@@ -45,6 +45,21 @@ class LibraryFileStatusService(
         }
     }
 
+    suspend fun checkSource(item: LibraryItem): LibraryPathState = withContext(ioDispatcher) {
+        val sourcePath = item.source?.path ?: return@withContext LibraryPathState.NOT_APPLICABLE
+        try {
+            if (exists(resolver.resolve(sourcePath))) {
+                LibraryPathState.AVAILABLE
+            } else {
+                LibraryPathState.MISSING
+            }
+        } catch (_: InvalidPathException) {
+            LibraryPathState.MISSING
+        } catch (_: IllegalArgumentException) {
+            LibraryPathState.MISSING
+        }
+    }
+
     suspend fun refresh(items: Collection<LibraryItem>): Map<LibraryItemKey, LibraryPathState> =
         withContext(ioDispatcher) {
             items.associate { item ->

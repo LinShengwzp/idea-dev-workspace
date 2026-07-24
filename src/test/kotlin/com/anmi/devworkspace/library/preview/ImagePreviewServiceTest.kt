@@ -20,6 +20,27 @@ import kotlin.test.assertTrue
 
 class ImagePreviewServiceTest {
     @Test
+    fun `manual refresh clears cached image previews`() = withTemporaryDirectory { directory ->
+        val path = directory.resolve("image.png")
+        Files.write(path, byteArrayOf(1))
+        var decodes = 0
+        val service = ImagePreviewService(
+            decoder = ImageDecoder { _, size ->
+                decodes++
+                image(size.width, size.height)
+            },
+        )
+
+        service.load(path, ImagePreviewSize(80, 60))
+        service.clear()
+        service.load(path, ImagePreviewSize(80, 60))
+
+        assertEquals(2, decodes)
+        assertEquals(1, service.cacheSize)
+        service.dispose()
+    }
+
+    @Test
     fun `cache is bounded and newer modification invalidates stale path entry`() {
         val cache = ImagePreviewCache(maxEntries = 2, maxPixels = 10_000)
         val path = Path.of("D:/images/cover.png")
