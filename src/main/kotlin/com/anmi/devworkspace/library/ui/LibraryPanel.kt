@@ -1,0 +1,244 @@
+package com.anmi.devworkspace.library.ui
+
+import com.anmi.devworkspace.DevWorkspaceBundle
+import com.anmi.devworkspace.library.search.LibraryQuery
+import com.anmi.devworkspace.library.search.LibrarySearchEngine
+import com.anmi.devworkspace.library.search.LibrarySearchRecord
+import com.anmi.devworkspace.library.service.LibraryService
+import com.anmi.devworkspace.library.service.LibraryState
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.ui.DocumentAdapter
+import com.intellij.ui.JBSplitter
+import com.intellij.ui.SearchTextField
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import com.intellij.util.ui.JBUI
+import java.awt.BorderLayout
+import java.awt.CardLayout
+import java.awt.FlowLayout
+import javax.swing.DefaultListModel
+import javax.swing.JComponent
+import javax.swing.event.DocumentEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class LibraryPanel(
+    private val project: Project,
+) : SimpleToolWindowPanel(true, true), Disposable {
+    private val library = project.service<LibraryService>()
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val presentation = LibraryListModel(LibrarySearchEngine())
+    private val listModel = DefaultListModel<LibraryListItem>()
+    private val list = JBList(listModel).apply {
+        cellRenderer = LibraryItemRenderer()
+        emptyText.text = message("library.empty.title")
+    }
+    private val search = SearchTextField()
+    private val details = DetailsPanel()
+    private var records: List<LibrarySearchRecord> = emptyList()
+    private var query = LibraryQuery()
+
+    private val filterPanel = LibraryFilterPanel { updated ->
+        query = updated
+        render()
+    }
+
+    init {
+        setToolbar(createToolbar())
+        setContent(createMainContent())
+        search.textEditor.document.addDocumentListener(object : DocumentAdapter() {
+            override fun textChanged(event: DocumentEvent) {
+                filterPanel.updateText(search.text)
+            }
+        })
+        list.addListSelectionListener {
+            if (!it.valueIsAdjusting) {
+                details.show(list.selectedValue)
+                updateToolbarActions()
+            }
+        }
+        collectState()
+        updateToolbarActions()
+    }
+
+    fun focusSearch() {
+        search.requestFocusInWindow()
+        search.textEditor.requestFocusInWindow()
+    }
+
+    override fun dispose() {
+        project.service<LibraryUiController>().detach(this)
+        coroutineScope.cancel()
+    }
+
+    private fun createMainContent(): JComponent {
+        val center = JBPanel<JBPanel<*>>(BorderLayout()).apply {
+            add(search, BorderLayout.NORTH)
+            add(JBScrollPane(list), BorderLayout.CENTER)
+        }
+        val contentAndDetails = JBSplitter(false, 0.68f).apply {
+            firstComponent = center
+            secondComponent = details
+            dividerWidth = JBUI.scale(4)
+        }
+        return JBSplitter(false, 0.22f).apply {
+            firstComponent = filterPanel
+            secondComponent = contentAndDetails
+            dividerWidth = JBUI.scale(4)
+        }
+    }
+
+    private val contextualActions = mutableListOf<PanelAction>()
+
+    private fun createToolbar(): JComponent {
+        val actions = listOf(
+            PanelAction("library.action.new", AllIcons.General.Add),
+            PanelAction("library.action.edit", AllIcons.Actions.Edit, requiresSelection = true),
+            PanelAction("library.action.copy", AllIcons.Actions.Copy, requiresSelection = true),
+            PanelAction("library.action.favorite", AllIcons.Nodes.Favorite, requiresSelection = true),
+            PanelAction("library.action.open", AllIcons.Actions.MenuOpen, requiresSelection = true),
+            PanelAction("library.action.relocate", AllIcons.Actions.MenuOpen, requiresSelection = true),
+            PanelAction("library.action.import", AllIcons.ToolbarDecorator.Import),
+            PanelAction("library.action.export", AllIcons.ToolbarDecorator.Export),
+            PanelAction("library.action.delete", AllIcons.General.Remove, requiresSelection = true),
+        )
+        contextualActions += actions
+        val toolbar = ActionManager.getInstance().createActionToolbar(
+            "DevLibrary",
+            DefaultActionGroup(actions),
+            true,
+        )
+        toolbar.targetComponent = this
+        return toolbar.component
+    }
+
+    private fun collectState() {
+        coroutineScope.launch {
+            library.state.collect { state ->
+                val nextRecords = records(state)
+                withContext(Dispatchers.EDT) {
+                    records = nextRecords
+                    render()
+                }
+            }
+        }
+    }
+
+    private fun records(state: LibraryState): List<LibrarySearchRecord> {
+        val groups = state.groups.associateBy { it.scope to it.id }
+        return state.items.map { item ->
+            val group = item.groupId?.let { id -> groups[item.scope to id] }
+            LibrarySearchRecord(
+                item = item,
+                groupName = group?.name,
+                groupOrder = group?.order ?: Int.MAX_VALUE,
+            )
+        }
+    }
+
+    private fun render() {
+        val selectedKey = list.selectedValue?.key
+        val rows = presentation.present(records, query)
+        listModel.clear()
+        rows.forEach(listModel::addElement)
+        list.selectedIndex = presentation.selectionIndex(rows, selectedKey)
+        details.show(list.selectedValue)
+        updateToolbarActions()
+    }
+
+    private fun updateToolbarActions() {
+        contextualActions.forEach { action ->
+            action.enabled = !action.requiresSelection || list.selectedValue != null
+        }
+    }
+
+    private inner class PanelAction(
+        key: String,
+        icon: javax.swing.Icon,
+        val requiresSelection: Boolean = false,
+    ) : AnAction(message(key), null, icon) {
+        var enabled: Boolean = true
+
+        override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            // Task 9/10 wires mutations; the shell exposes correct selection affordances meanwhile.
+            event.presentation.isEnabled = false && enabled
+        }
+
+        override fun actionPerformed(event: AnActionEvent) = Unit
+    }
+
+    private class DetailsPanel : JBPanel<DetailsPanel>(CardLayout()) {
+        private val cards = layout as CardLayout
+        private val empty = JBLabel(message("library.details.empty"))
+        private val title = JBLabel()
+        private val metadata = JBLabel()
+        private val note = JBTextArea().apply {
+            isEditable = false
+            lineWrap = true
+            wrapStyleWord = true
+            border = JBUI.Borders.empty()
+        }
+        private val item = JBPanel<JBPanel<*>>(BorderLayout(0, JBUI.scale(6))).apply {
+            border = JBUI.Borders.empty(8)
+            add(
+                JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                    add(title)
+                },
+                BorderLayout.NORTH,
+            )
+            add(JBScrollPane(note), BorderLayout.CENTER)
+            add(metadata, BorderLayout.SOUTH)
+        }
+
+        init {
+            border = JBUI.Borders.empty()
+            add(empty, EMPTY)
+            add(item, ITEM)
+            cards.show(this, EMPTY)
+        }
+
+        fun show(value: LibraryListItem?) {
+            if (value == null) {
+                cards.show(this, EMPTY)
+                return
+            }
+            title.text = value.item.title
+            note.text = value.item.note.orEmpty()
+            metadata.text = message(
+                "library.details.metadata",
+                message("library.type.${value.item.type.name.lowercase()}"),
+                message("library.scope.${value.item.scope.name.lowercase().replace('_', '.')}"),
+            )
+            cards.show(this, ITEM)
+        }
+
+        private companion object {
+            const val EMPTY = "empty"
+            const val ITEM = "item"
+        }
+    }
+
+    private companion object {
+        fun message(key: String, vararg params: Any): String =
+            DevWorkspaceBundle.message(key, *params)
+    }
+}

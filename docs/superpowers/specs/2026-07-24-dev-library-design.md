@@ -316,6 +316,53 @@ D:/documents/example.pdf
 - 所有用户文案进入 `DevWorkspaceBundle.properties`；
 - 使用 IDEA 原生组件、图标、颜色和滚动容器。
 
+### 9.1 Action System 与快速添加
+
+注册两个可由用户在 Keymap 中配置的 IDE Action：
+
+- `Open Library`：激活“资料库”Tool Window 并聚焦搜索框，不重置已有分组、筛选和选中条目；
+- `Quick Add to Library`：从当前 `DataContext` 提取候选内容，打开轻量确认对话框；保存后不强制打开 Tool Window。
+
+快捷键规则：
+
+- 两个 Action 均进入 Find Action 和 IDE Keymap；
+- 只有确认 Windows 默认 Keymap 中不存在冲突时才提供默认快捷键；
+- 无法确认安全组合时保持未绑定，并在完成检查点给出建议组合，不覆盖 IDE 现有快捷键。
+
+快速添加默认作用域：
+
+- 编辑器选区、当前编辑器文件、Project View 文件默认为 `PROJECT_PRIVATE`；
+- 无项目上下文的剪贴板 URL 或文本默认为 `GLOBAL`；
+- `PROJECT_SHARED` 只能由用户在对话框中明确选择；
+- 每个项目仅记忆上次分组和标签，不盲目复用上次作用域。
+
+上下文提取规则：
+
+- 编辑器选中文本生成 Markdown；代码选区使用按当前文件类型推断语言的 fenced code block；
+- 来源说明包含项目相对路径和选中行范围；
+- 编辑器无选区时按路径添加当前文件；
+- Project View 文件通过上下文菜单添加；
+- 多选文件生成多个草稿，由一个批量确认对话框审阅；
+- 0.2 不递归添加目录；
+- 图片、媒体和 URL 复用现有类型检测规则。
+
+轻量确认对话框预填标题、作用域、分组、标签、来源说明和内容/路径预览：
+
+- Enter 保存，Escape 取消；
+- “完整编辑”将同一草稿交给完整条目编辑器；
+- 保存成功显示轻量通知，并提供“查看条目”动作；
+- 实际上下文提取、持久化和 UI 保持分离；
+- `update()` 对无效上下文隐藏或禁用动作，并使用目标平台要求的 `ActionUpdateThread`；
+- 文件读取和仓库写入不得在 EDT 上执行。
+
+上下文菜单文案：
+
+- 编辑器有选区：“添加选中内容到资料库”；
+- 编辑器无选区：“添加当前文件到资料库”；
+- Project View 文件选择：“添加到资料库”。
+
+同步扩展点不属于 0.2。WebDAV、GitHub 和自定义服务器仅作为未来 `LibrarySyncProvider` 的候选实现，本版本不实现远程同步。
+
 ## 10. 导入导出
 
 ZIP 格式：

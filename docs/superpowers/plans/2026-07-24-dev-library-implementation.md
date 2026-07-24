@@ -245,6 +245,11 @@
 - platform icons/colors;
 - StateFlow collected safely onto EDT;
 - no secrets/task runtime coupling.
+- register configurable `Open Library` and `Quick Add to Library` actions in Find Action and Keymap;
+- `Open Library` activates the Tool Window, focuses search, and preserves filters/group/selection;
+- inspect the Build 262 Windows default keymap before assigning defaults; leave unbound when safety is unclear;
+- add Action System shell and context-extraction boundary without implementing persistence prematurely;
+- keep every action string in `DevWorkspaceBundle.properties`.
 
 **Commit:** `feat: add library tool window`
 
@@ -277,6 +282,15 @@
 - scrollable dialogs;
 - path status visible;
 - comments on scope-move transaction.
+- implement UI-independent quick-add drafts and DataContext extraction;
+- editor selections become Markdown, with fenced code and inferred language for code files;
+- include project-relative source path and selected line range;
+- current editor and Project View files default to project-private; context-free clipboard defaults global;
+- project-shared requires explicit selection and previous scope is never blindly reused;
+- remember last group/tags per project;
+- support one batch confirmation dialog for multiple Project View files, without directory recursion;
+- add editor and Project View context-menu actions with correct `update()` and `ActionUpdateThread`;
+- lightweight confirmation supports Enter, Escape, and “完整编辑” with the same draft.
 
 **Commit:** `feat: manage library entries and groups`
 
@@ -306,6 +320,18 @@
 12. ZIP export/import and ID conflict;
 13. Chinese UI and scrollability;
 14. project disposal without leaks.
+15. Open Library preserves view state and focuses search;
+16. quick-add editor selection/current file/Project View/clipboard contexts;
+17. multi-file batch review without recursive directories;
+18. successful quick add notification and “查看条目” navigation;
+19. external Markdown edits refresh both search body and visible preview without JSON changes;
+20. both actions appear in Find Action and Keymap without overriding a conflicting shortcut.
+
+**Action-system completion rules:**
+- wire quick-add persistence off EDT and do not force-open the Tool Window after save;
+- wire “完整编辑” to the full editor with the unchanged draft;
+- keep context extraction independent from persistence and dialogs;
+- remote synchronization remains out of scope; do not implement WebDAV, GitHub, custom-server, or `LibrarySyncProvider` behavior.
 
 **Verification:**
 ```powershell
