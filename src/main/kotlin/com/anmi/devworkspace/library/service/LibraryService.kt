@@ -111,6 +111,9 @@ class LibraryService private constructor(
     fun path(scope: LibraryScope): Path =
         repositories.getValue(scope).path.toAbsolutePath().normalize()
 
+    /** Adapter access for transactional import/export; callers must keep work off EDT. */
+    internal fun repository(scope: LibraryScope): LibraryRepository = repositories.getValue(scope)
+
     override fun dispose() {
         fileListener?.dispose()
         messageBusConnection?.disconnect()

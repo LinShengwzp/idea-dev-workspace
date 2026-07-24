@@ -3,6 +3,7 @@ package com.anmi.devworkspace.library.ui
 import com.anmi.devworkspace.library.domain.LibraryItem
 import com.anmi.devworkspace.library.domain.LibraryScope
 import com.anmi.devworkspace.library.search.LibraryQuery
+import com.anmi.devworkspace.library.search.LibraryPathState
 import com.anmi.devworkspace.library.search.LibrarySearchEngine
 import com.anmi.devworkspace.library.search.LibrarySearchRecord
 
@@ -15,6 +16,7 @@ data class LibraryListItem(
     val item: LibraryItem,
     val groupName: String?,
     val groupScope: LibraryScope?,
+    val pathState: LibraryPathState = LibraryPathState.NOT_APPLICABLE,
 ) {
     val key: LibraryItemKey = LibraryItemKey(item.scope, item.id)
 }
@@ -32,6 +34,7 @@ class LibraryListModel(
                 item = record.item,
                 groupName = record.groupName,
                 groupScope = record.item.scope.takeIf { record.item.groupId != null },
+                pathState = record.pathState,
             )
         }
 

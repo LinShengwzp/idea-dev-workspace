@@ -3,6 +3,7 @@ package com.anmi.devworkspace.library.ui
 import com.anmi.devworkspace.DevWorkspaceBundle
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.SimpleTextAttributes
+import com.anmi.devworkspace.library.search.LibraryPathState
 import javax.swing.JList
 
 class LibraryItemRenderer : ColoredListCellRenderer<LibraryListItem>() {
@@ -27,6 +28,9 @@ class LibraryItemRenderer : ColoredListCellRenderer<LibraryListItem>() {
             "  ${message("library.scope.${value.item.scope.name.lowercase().replace('_', '.')}")}",
             SimpleTextAttributes.GRAYED_ATTRIBUTES,
         )
+        if (value.pathState == LibraryPathState.MISSING) {
+            append("  ${message("library.path.missing")}", SimpleTextAttributes.ERROR_ATTRIBUTES)
+        }
     }
 
     private fun message(key: String): String = DevWorkspaceBundle.message(key)

@@ -47,6 +47,13 @@ class LibraryFilterPanel(
         publish()
     }
 
+    fun clearFilters() {
+        scopes.clearSelection()
+        types.clearSelection()
+        favorite.isSelected = false
+        publish()
+    }
+
     private fun publish() {
         changed(
             LibraryQuery(
