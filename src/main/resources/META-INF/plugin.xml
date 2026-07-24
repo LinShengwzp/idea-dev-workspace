@@ -30,31 +30,26 @@
                 canCloseContents="false"/>
     </extensions>
 
-    <actions>
+    <!-- Action System resolves action.<full-id>.* from this bundle for Tools, Find Action, Keymap, and context menus. -->
+    <actions resource-bundle="messages.DevWorkspaceBundle">
         <action
                 id="DevWorkspace.OpenLibrary"
-                class="com.anmi.devworkspace.library.actions.OpenLibraryAction"
-                text="%library.action.open.library"
-                description="%library.action.open.library.description">
+                class="com.anmi.devworkspace.library.actions.OpenLibraryAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
                 id="DevWorkspace.QuickAddLibrary"
-                class="com.anmi.devworkspace.library.actions.QuickAddLibraryAction"
-                text="%library.action.quick.add"
-                description="%library.action.quick.add.description">
+                class="com.anmi.devworkspace.library.actions.QuickAddLibraryAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
                 id="DevWorkspace.AddEditorContextToLibrary"
-                class="com.anmi.devworkspace.library.actions.AddEditorContextToLibraryAction"
-                text="%library.context.add.current.file">
+                class="com.anmi.devworkspace.library.actions.AddEditorContextToLibraryAction">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
         <action
                 id="DevWorkspace.AddProjectFilesToLibrary"
-                class="com.anmi.devworkspace.library.actions.AddProjectFilesToLibraryAction"
-                text="%library.context.add.project.files">
+                class="com.anmi.devworkspace.library.actions.AddProjectFilesToLibraryAction">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
     </actions>
