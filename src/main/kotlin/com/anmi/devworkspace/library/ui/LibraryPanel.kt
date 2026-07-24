@@ -4,8 +4,14 @@ import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.library.search.LibraryQuery
 import com.anmi.devworkspace.library.search.LibrarySearchEngine
 import com.anmi.devworkspace.library.search.LibrarySearchRecord
+import com.anmi.devworkspace.library.domain.LibraryItem
+import com.anmi.devworkspace.library.domain.LibraryItemType
+import com.anmi.devworkspace.library.domain.LibraryScope
+import com.anmi.devworkspace.library.files.LibraryPathResolver
+import com.anmi.devworkspace.library.service.LibraryMutationService
 import com.anmi.devworkspace.library.service.LibraryService
 import com.anmi.devworkspace.library.service.LibraryState
+import com.anmi.devworkspace.library.storage.MarkdownContentStore
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -15,7 +21,10 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.JBSplitter
@@ -43,6 +52,7 @@ class LibraryPanel(
     private val project: Project,
 ) : SimpleToolWindowPanel(true, true), Disposable {
     private val library = project.service<LibraryService>()
+    private val mutations = project.service<LibraryMutationService>()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val presentation = LibraryListModel(LibrarySearchEngine())
     private val listModel = DefaultListModel<LibraryListItem>()
@@ -54,6 +64,7 @@ class LibraryPanel(
     private val details = DetailsPanel()
     private var records: List<LibrarySearchRecord> = emptyList()
     private var query = LibraryQuery()
+    private var pendingReveal: LibraryItemKey? = null
 
     private val filterPanel = LibraryFilterPanel { updated ->
         query = updated
@@ -83,6 +94,13 @@ class LibraryPanel(
         search.textEditor.requestFocusInWindow()
     }
 
+    fun reveal(key: LibraryItemKey) {
+        pendingReveal = key
+        search.text = ""
+        render()
+        focusSearch()
+    }
+
     override fun dispose() {
         project.service<LibraryUiController>().detach(this)
         coroutineScope.cancel()
@@ -109,15 +127,26 @@ class LibraryPanel(
 
     private fun createToolbar(): JComponent {
         val actions = listOf(
-            PanelAction("library.action.new", AllIcons.General.Add),
-            PanelAction("library.action.edit", AllIcons.Actions.Edit, requiresSelection = true),
-            PanelAction("library.action.copy", AllIcons.Actions.Copy, requiresSelection = true),
-            PanelAction("library.action.favorite", AllIcons.Nodes.Favorite, requiresSelection = true),
+            PanelAction("library.action.new", AllIcons.General.Add) { openNew() },
+            PanelAction("library.action.manage.groups", AllIcons.Nodes.Folder) { manageGroups() },
+            PanelAction("library.action.edit", AllIcons.Actions.Edit, requiresSelection = true) {
+                selectedItem()?.let { openEditor(it, copy = false) }
+            },
+            PanelAction("library.action.copy", AllIcons.Actions.Copy, requiresSelection = true) {
+                selectedItem()?.let { openEditor(it, copy = true) }
+            },
+            PanelAction("library.action.favorite", AllIcons.Nodes.Favorite, requiresSelection = true) {
+                selectedItem()?.let { selected -> coroutineScope.launch { mutations.toggleFavorite(selected) } }
+            },
             PanelAction("library.action.open", AllIcons.Actions.MenuOpen, requiresSelection = true),
-            PanelAction("library.action.relocate", AllIcons.Actions.MenuOpen, requiresSelection = true),
+            PanelAction("library.action.relocate", AllIcons.Actions.MenuOpen, requiresSelection = true) {
+                selectedItem()?.let(::relocate)
+            },
             PanelAction("library.action.import", AllIcons.ToolbarDecorator.Import),
             PanelAction("library.action.export", AllIcons.ToolbarDecorator.Export),
-            PanelAction("library.action.delete", AllIcons.General.Remove, requiresSelection = true),
+            PanelAction("library.action.delete", AllIcons.General.Remove, requiresSelection = true) {
+                selectedItem()?.let(::delete)
+            },
         )
         contextualActions += actions
         val toolbar = ActionManager.getInstance().createActionToolbar(
@@ -154,11 +183,15 @@ class LibraryPanel(
     }
 
     private fun render() {
-        val selectedKey = list.selectedValue?.key
+        val selectedKey = pendingReveal ?: list.selectedValue?.key
         val rows = presentation.present(records, query)
         listModel.clear()
         rows.forEach(listModel::addElement)
         list.selectedIndex = presentation.selectionIndex(rows, selectedKey)
+        if (list.selectedIndex >= 0) {
+            pendingReveal = null
+            list.ensureIndexIsVisible(list.selectedIndex)
+        }
         details.show(list.selectedValue)
         updateToolbarActions()
     }
@@ -169,21 +202,110 @@ class LibraryPanel(
         }
     }
 
+    private fun selectedItem(): LibraryItem? = list.selectedValue?.item
+
+    private fun manageGroups() {
+        val original = library.state.value.groups
+        val dialog = LibraryGroupManagerDialog(project, original)
+        if (!dialog.showAndGet()) return
+        val updated = dialog.result ?: return
+        val keys = updated.mapTo(hashSetOf()) { it.scope to it.id }
+        coroutineScope.launch {
+            original.filterNot { (it.scope to it.id) in keys }.forEach { mutations.deleteGroup(it) }
+            updated.forEach { mutations.saveGroup(it) }
+        }
+    }
+
+    private fun openNew() {
+        val dialog = LibraryEditorDialog(
+            project,
+            LibraryEditorState(
+                title = "",
+                type = LibraryItemType.MARKDOWN,
+                scope = LibraryScope.PROJECT_PRIVATE,
+            ),
+            library.state.value.groups,
+        )
+        if (!dialog.showAndGet()) return
+        dialog.result?.let { state -> coroutineScope.launch { mutations.create(state) } }
+    }
+
+    private fun openEditor(item: LibraryItem, copy: Boolean) {
+        coroutineScope.launch {
+            val markdown = if (item.type == LibraryItemType.MARKDOWN) {
+                MarkdownContentStore(library.path(item.scope).parent).read(item.id)
+            } else {
+                null
+            }
+            withContext(Dispatchers.EDT) {
+                val dialog = LibraryEditorDialog(
+                    project,
+                    item.toEditorState(if (copy) null else item.id, markdown),
+                    library.state.value.groups,
+                )
+                if (!dialog.showAndGet()) return@withContext
+                val state = dialog.result ?: return@withContext
+                coroutineScope.launch {
+                    if (copy) mutations.create(state) else mutations.update(item, state)
+                }
+            }
+        }
+    }
+
+    private fun relocate(item: LibraryItem) {
+        if (item.type == LibraryItemType.MARKDOWN || item.type == LibraryItemType.LINK) return
+        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
+        val selected = FileChooser.chooseFile(descriptor, project, null) ?: return
+        val base = project.basePath?.let(java.nio.file.Path::of) ?: return
+        val target = LibraryPathResolver(base).persist(selected.toNioPath())
+        coroutineScope.launch { mutations.relocate(item, target) }
+    }
+
+    private fun delete(item: LibraryItem) {
+        if (
+            Messages.showYesNoDialog(
+                project,
+                message("library.delete.message", item.title),
+                message("library.delete.title"),
+                Messages.getQuestionIcon(),
+            ) != Messages.YES
+        ) {
+            return
+        }
+        coroutineScope.launch { mutations.delete(item) }
+    }
+
+    private fun LibraryItem.toEditorState(editorId: String?, markdown: String?): LibraryEditorState =
+        LibraryEditorState(
+            id = editorId,
+            title = title,
+            type = type,
+            scope = scope,
+            groupId = groupId,
+            tags = tags,
+            note = note,
+            favorite = favorite,
+            target = target,
+            markdown = markdown,
+        )
+
     private inner class PanelAction(
         key: String,
         icon: javax.swing.Icon,
         val requiresSelection: Boolean = false,
+        private val callback: (() -> Unit)? = null,
     ) : AnAction(message(key), null, icon) {
         var enabled: Boolean = true
 
         override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
         override fun update(event: AnActionEvent) {
-            // Task 9/10 wires mutations; the shell exposes correct selection affordances meanwhile.
-            event.presentation.isEnabled = false && enabled
+            event.presentation.isEnabled = callback != null && enabled
         }
 
-        override fun actionPerformed(event: AnActionEvent) = Unit
+        override fun actionPerformed(event: AnActionEvent) {
+            callback?.invoke()
+        }
     }
 
     private class DetailsPanel : JBPanel<DetailsPanel>(CardLayout()) {

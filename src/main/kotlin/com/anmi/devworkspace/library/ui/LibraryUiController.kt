@@ -19,4 +19,8 @@ class LibraryUiController {
     fun focusSearch() {
         panelReference.get()?.focusSearch()
     }
+
+    fun reveal(key: LibraryItemKey) {
+        panelReference.get()?.reveal(key)
+    }
 }
