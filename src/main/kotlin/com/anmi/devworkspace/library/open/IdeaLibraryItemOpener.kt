@@ -4,15 +4,19 @@ import com.anmi.devworkspace.library.domain.LibraryItem
 import com.anmi.devworkspace.library.domain.LibraryItemType
 import com.anmi.devworkspace.library.files.LibraryFileStatusService
 import com.anmi.devworkspace.library.files.LibraryPathResolver
+import com.anmi.devworkspace.library.search.LibraryPathState
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.UnknownFileType
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.awt.Desktop
+import java.io.IOException
 import java.nio.file.Path
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -37,17 +41,34 @@ class IdeaLibraryItemOpener(
         preference: LibraryOpenPreference,
     ): LibraryOpenDecision {
         val pathState = statusService.check(item)
-        val path = resolveTarget(item)
+        val path = if (pathState == LibraryPathState.AVAILABLE) {
+            runCatching { resolveTarget(item) }.getOrNull()
+        } else {
+            null
+        }
+        val effectivePathState = if (item.type in FILE_TYPES && path == null) {
+            LibraryPathState.MISSING
+        } else {
+            pathState
+        }
         val virtualFile = if (path != null && shouldInspectIdeaType(item, preference)) {
             withContext(Dispatchers.IO) {
-                LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
+                try {
+                    LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (cancellation: ProcessCanceledException) {
+                    throw cancellation
+                } catch (_: RuntimeException) {
+                    null
+                }
             }
         } else {
             null
         }
         val decision = decisions.decide(
             item = item,
-            pathState = pathState,
+            pathState = effectivePathState,
             ideaReadable = virtualFile?.fileType != UnknownFileType.INSTANCE && virtualFile != null,
             preference = preference,
         )
@@ -76,8 +97,19 @@ class IdeaLibraryItemOpener(
             }
             LibraryOpenAction.SYSTEM -> withContext(Dispatchers.IO) {
                 val resolved = requireNotNull(path)
-                require(Desktop.isDesktopSupported()) { "Desktop file opening is unavailable" }
-                Desktop.getDesktop().open(resolved.toFile())
+                if (!Desktop.isDesktopSupported()) {
+                    withContext(Dispatchers.EDT) { showMissing(item) }
+                    return@withContext
+                }
+                try {
+                    Desktop.getDesktop().open(resolved.toFile())
+                } catch (_: IOException) {
+                    withContext(Dispatchers.EDT) { showMissing(item) }
+                } catch (_: SecurityException) {
+                    withContext(Dispatchers.EDT) { showMissing(item) }
+                } catch (_: UnsupportedOperationException) {
+                    withContext(Dispatchers.EDT) { showMissing(item) }
+                }
             }
             LibraryOpenAction.MISSING -> withContext(Dispatchers.EDT) {
                 showMissing(item)

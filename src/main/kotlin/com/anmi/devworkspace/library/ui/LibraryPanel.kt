@@ -11,6 +11,7 @@ import com.anmi.devworkspace.library.domain.LibraryScope
 import com.anmi.devworkspace.library.files.LibraryPathResolver
 import com.anmi.devworkspace.library.files.LibraryFileStatusService
 import com.anmi.devworkspace.library.open.IdeaLibraryItemOpener
+import com.anmi.devworkspace.library.open.IdeaLibrarySourceNavigator
 import com.anmi.devworkspace.library.service.LibraryMutationService
 import com.anmi.devworkspace.library.service.LibraryService
 import com.anmi.devworkspace.library.service.LibraryState
@@ -41,19 +42,13 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.CardLayout
-import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.nio.file.Path
 import javax.swing.DefaultListModel
-import javax.swing.ImageIcon
 import javax.swing.JComponent
-import javax.swing.JEditorPane
-import javax.swing.JLabel
 import javax.swing.event.DocumentEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +66,7 @@ class LibraryPanel(
     private val pathResolver = LibraryPathResolver(Path.of(requireNotNull(project.basePath)))
     private val fileStatus = LibraryFileStatusService(pathResolver)
     private val imagePreview = ImagePreviewService()
+    private val sourceNavigator = IdeaLibrarySourceNavigator(project)
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val presentation = LibraryListModel(LibrarySearchEngine())
     private val recordLoader = LibraryRecordLoader(
@@ -86,7 +82,10 @@ class LibraryPanel(
         emptyText.text = message("library.empty.title")
     }
     private val search = SearchTextField()
-    private val details = DetailsPanel()
+    private val details = LibraryDetailsPanel(
+        openTarget = { item -> coroutineScope.launch { opener.open(item) } },
+        openSource = { source -> coroutineScope.launch { sourceNavigator.open(source) } },
+    )
     private val errorBanner = JBLabel(message("library.error.banner")).apply {
         icon = AllIcons.General.Warning
         border = JBUI.Borders.empty(5, 8)
@@ -451,87 +450,6 @@ class LibraryPanel(
 
         override fun actionPerformed(event: AnActionEvent) {
             callback?.invoke()
-        }
-    }
-
-    private class DetailsPanel : JBPanel<DetailsPanel>(CardLayout()) {
-        private val cards = layout as CardLayout
-        private val empty = JBLabel(message("library.details.empty"))
-        private val title = JBLabel()
-        private val metadata = JBLabel()
-        private val note = JBTextArea().apply {
-            isEditable = false
-            lineWrap = true
-            wrapStyleWord = true
-            border = JBUI.Borders.empty()
-        }
-        private val preview = JEditorPane("text/html", "").apply {
-            isEditable = false
-            border = JBUI.Borders.empty()
-        }
-        private val image = JLabel().apply {
-            horizontalAlignment = JLabel.CENTER
-            verticalAlignment = JLabel.CENTER
-        }
-        private val bodyCards = CardLayout()
-        private val body = JBPanel<JBPanel<*>>(bodyCards).apply {
-            add(JBScrollPane(note), NOTE)
-            add(JBScrollPane(preview), PREVIEW)
-            add(JBScrollPane(image), IMAGE)
-        }
-        private val item = JBPanel<JBPanel<*>>(BorderLayout(0, JBUI.scale(6))).apply {
-            border = JBUI.Borders.empty(8)
-            add(
-                JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-                    add(title)
-                },
-                BorderLayout.NORTH,
-            )
-            add(body, BorderLayout.CENTER)
-            add(metadata, BorderLayout.SOUTH)
-        }
-
-        init {
-            border = JBUI.Borders.empty()
-            add(empty, EMPTY)
-            add(item, ITEM)
-            cards.show(this, EMPTY)
-        }
-
-        fun show(value: LibraryListItem?) {
-            if (value == null) {
-                cards.show(this, EMPTY)
-                return
-            }
-            title.text = value.item.title
-            note.text = value.item.note.orEmpty()
-            bodyCards.show(body, NOTE)
-            metadata.text = message(
-                "library.details.metadata",
-                message("library.type.${value.item.type.name.lowercase()}"),
-                message("library.scope.${value.item.scope.name.lowercase().replace('_', '.')}"),
-            )
-            cards.show(this, ITEM)
-        }
-
-        fun showHtml(html: String) {
-            preview.text = html
-            preview.caretPosition = 0
-            bodyCards.show(body, PREVIEW)
-        }
-
-        fun showImage(value: ImagePreview) {
-            image.icon = (value as? ImagePreview.Available)?.let { ImageIcon(it.image) }
-            image.text = if (value is ImagePreview.Placeholder) message("library.preview.unavailable") else null
-            bodyCards.show(body, IMAGE)
-        }
-
-        private companion object {
-            const val EMPTY = "empty"
-            const val ITEM = "item"
-            const val NOTE = "note"
-            const val PREVIEW = "preview"
-            const val IMAGE = "image"
         }
     }
 

@@ -124,6 +124,14 @@ val source: LibraryItemSource?
 - `endLine` 超过当前文件行数：截断到最后一行；
 - 无有效项目上下文时，保留来源信息但禁用 IDEA 内跳转。
 
+实现确认：
+
+- 详情模型与来源行范围决策保持为 UI 无关的纯 Kotlin 边界；
+- IntelliJ 适配层仅负责 VFS 刷新、编辑器打开、caret/selection 和滚动；
+- 每次点击目标或来源都会重新检查当前状态；
+- URL、路径和来源同时提供平台链接样式与复制动作；
+- JSON v1/旧 ZIP 继续通过共享 codec 读取，所有保存统一输出 JSON v2。
+
 ## 5. 刷新功能
 
 工具栏增加“刷新”按钮。
