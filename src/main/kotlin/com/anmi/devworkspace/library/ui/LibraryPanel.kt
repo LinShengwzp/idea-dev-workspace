@@ -188,7 +188,7 @@ class LibraryPanel(
     private fun createToolbar(): JComponent {
         val actions = listOf(
             PanelAction("library.action.new", AllIcons.General.Add) { openNew() },
-            PanelAction("library.action.manage.groups", AllIcons.Nodes.Folder) { manageGroups() },
+            PanelAction("library.action.manage.groups", AllIcons.Actions.GroupBy) { manageGroups() },
             PanelAction("library.action.edit", AllIcons.Actions.Edit, requiresSelection = true) {
                 selectedItem()?.let { openEditor(it, copy = false) }
             },

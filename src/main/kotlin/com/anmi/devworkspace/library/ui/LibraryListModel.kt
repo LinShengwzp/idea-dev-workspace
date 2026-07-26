@@ -16,7 +16,9 @@ data class LibraryListItem(
     val item: LibraryItem,
     val groupName: String?,
     val groupScope: LibraryScope?,
+    val markdownBody: String? = null,
     val pathState: LibraryPathState = LibraryPathState.NOT_APPLICABLE,
+    val sourcePathState: LibraryPathState = LibraryPathState.NOT_APPLICABLE,
 ) {
     val key: LibraryItemKey = LibraryItemKey(item.scope, item.id)
 }
@@ -34,7 +36,9 @@ class LibraryListModel(
                 item = record.item,
                 groupName = record.groupName,
                 groupScope = record.item.scope.takeIf { record.item.groupId != null },
+                markdownBody = record.markdownBody,
                 pathState = record.pathState,
+                sourcePathState = record.sourcePathState,
             )
         }
 
