@@ -28,6 +28,13 @@ data class LibraryEditorError(
     val messageKey: String,
 )
 
+object LibraryTargetEditorPolicy {
+    fun showsChooser(type: LibraryItemType): Boolean =
+        type == LibraryItemType.FILE ||
+            type == LibraryItemType.IMAGE ||
+            type == LibraryItemType.MEDIA
+}
+
 /** UI-independent validation keeps paths and Markdown bodies out of Swing state machinery. */
 class LibraryEditorModel {
     fun validate(state: LibraryEditorState): List<LibraryEditorError> = buildList {

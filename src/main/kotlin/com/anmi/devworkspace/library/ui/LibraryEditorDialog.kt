@@ -4,25 +4,33 @@ import com.anmi.devworkspace.DevWorkspaceBundle
 import com.anmi.devworkspace.library.domain.LibraryGroup
 import com.anmi.devworkspace.library.domain.LibraryItemType
 import com.anmi.devworkspace.library.domain.LibraryScope
+import com.anmi.devworkspace.library.files.LibraryPathResolver
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
-import java.awt.Dimension
+import java.awt.BorderLayout
 import java.awt.Component
+import java.awt.Dimension
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
+import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JList
+import javax.swing.JPanel
 
 class LibraryEditorDialog(
-    project: Project,
+    private val project: Project,
     initial: LibraryEditorState,
     groups: List<LibraryGroup>,
 ) : DialogWrapper(project) {
@@ -30,6 +38,7 @@ class LibraryEditorDialog(
     private val itemId = initial.id
     private val favorite = initial.favorite
     private val source = initial.source
+    private val pathResolver = LibraryPathResolver(java.nio.file.Path.of(requireNotNull(project.basePath)))
     private val availableGroups = groups
     private val titleField = JBTextField(initial.title)
     private val typeField = JComboBox(LibraryItemType.entries.toTypedArray()).apply {
@@ -41,9 +50,17 @@ class LibraryEditorDialog(
         renderer = LibraryLocalizedEnumRenderer()
     }
     private val groupField = JComboBox<String>().apply { renderer = GroupRenderer(groups) }
-    private val tagsField = JBTextField(initial.tags.joinToString(", "))
+    private val tagsField = LibraryTagChipEditor(initial.tags)
     private val noteField = JBTextArea(initial.note.orEmpty(), 4, 42)
     private val targetField = JBTextField(initial.target.orEmpty())
+    private val targetChooser = JButton(AllIcons.General.OpenDisk).apply {
+        toolTipText = message("library.editor.target.choose")
+        addActionListener { chooseTarget() }
+    }
+    private val targetPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+        add(targetField, BorderLayout.CENTER)
+        add(targetChooser, BorderLayout.EAST)
+    }
     private val markdownField = JBTextArea(initial.markdown.orEmpty(), 12, 42)
     var result: LibraryEditorState? = null
         private set
@@ -53,6 +70,8 @@ class LibraryEditorDialog(
         setOKButtonText(message("library.editor.save"))
         updateGroups(initial.scope, initial.groupId)
         scopeField.addActionListener { updateGroups(scopeField.selectedItem as LibraryScope, null) }
+        typeField.addActionListener { updateTargetChooser() }
+        updateTargetChooser()
         init()
         initValidation()
     }
@@ -64,7 +83,7 @@ class LibraryEditorDialog(
             .addLabeledComponent(message("library.editor.scope"), scopeField)
             .addLabeledComponent(message("library.editor.group"), groupField)
             .addLabeledComponent(message("library.editor.tags"), tagsField)
-            .addLabeledComponent(message("library.editor.target"), targetField)
+            .addLabeledComponent(message("library.editor.target"), targetPanel)
             .addLabeledComponent(message("library.editor.note"), JBScrollPane(noteField))
             .addLabeledComponent(message("library.editor.content"), JBScrollPane(markdownField))
             .panel.apply { border = JBUI.Borders.empty(8) }
@@ -85,6 +104,7 @@ class LibraryEditorDialog(
     }
 
     override fun doOKAction() {
+        tagsField.commitPending()
         val draft = model.toDraft(readState())
         if (model.validate(draft).isNotEmpty()) return
         result = draft
@@ -98,15 +118,35 @@ class LibraryEditorDialog(
             type = typeField.selectedItem as LibraryItemType,
             scope = scopeField.selectedItem as LibraryScope,
             groupId = (groupField.selectedItem as? String)?.takeIf(String::isNotBlank),
-            tags = tagsField.text.split(',').mapTo(linkedSetOf()) { it.trim() }.filterTo(linkedSetOf()) {
-                it.isNotEmpty()
-            },
+            tags = tagsField.tags,
             note = noteField.text,
             favorite = favorite,
             target = targetField.text,
             markdown = markdownField.text,
             source = source,
         )
+
+    private fun updateTargetChooser() {
+        targetChooser.isVisible = LibraryTargetEditorPolicy.showsChooser(
+            typeField.selectedItem as LibraryItemType,
+        )
+    }
+
+    private fun chooseTarget() {
+        val initialFile = runCatching { pathResolver.resolve(targetField.text) }
+            .getOrNull()
+            ?.let { LocalFileSystem.getInstance().findFileByNioFile(it) }
+            ?.takeIf { it.isValid }
+            ?: LocalFileSystem.getInstance().findFileByNioFile(
+                pathResolver.resolve(LibraryPathResolver.PROJECT_TOKEN),
+            )
+        val selected = FileChooser.chooseFile(
+            FileChooserDescriptor(true, false, false, false, false, false),
+            project,
+            initialFile,
+        ) ?: return
+        targetField.text = pathResolver.persist(selected.toNioPath())
+    }
 
     private fun updateGroups(scope: LibraryScope, selected: String?) {
         val ids = availableGroups.filter { it.scope == scope }.map(LibraryGroup::id)

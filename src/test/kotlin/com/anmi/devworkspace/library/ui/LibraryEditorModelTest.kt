@@ -48,4 +48,36 @@ class LibraryEditorModelTest {
         assertEquals("正文", draft.markdown)
         assertEquals(source, draft.source)
     }
+
+    @Test
+    fun `editing file target preserves structured source`() {
+        val source = LibraryItemSource(
+            LibrarySourceKind.EDITOR_SELECTION,
+            "\${PROJECT_DIR}/src/Main.kt",
+            2,
+            3,
+        )
+
+        val draft = model.toDraft(
+            LibraryEditorState(
+                title = "Reference",
+                type = LibraryItemType.FILE,
+                scope = LibraryScope.PROJECT_PRIVATE,
+                target = "  \${PROJECT_DIR}/docs/reference.pdf  ",
+                source = source,
+            ),
+        )
+
+        assertEquals("\${PROJECT_DIR}/docs/reference.pdf", draft.target)
+        assertEquals(source, draft.source)
+    }
+
+    @Test
+    fun `target chooser is shown only for path-backed item types`() {
+        assertEquals(false, LibraryTargetEditorPolicy.showsChooser(LibraryItemType.MARKDOWN))
+        assertEquals(false, LibraryTargetEditorPolicy.showsChooser(LibraryItemType.LINK))
+        assertEquals(true, LibraryTargetEditorPolicy.showsChooser(LibraryItemType.FILE))
+        assertEquals(true, LibraryTargetEditorPolicy.showsChooser(LibraryItemType.IMAGE))
+        assertEquals(true, LibraryTargetEditorPolicy.showsChooser(LibraryItemType.MEDIA))
+    }
 }
