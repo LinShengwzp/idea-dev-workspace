@@ -49,5 +49,10 @@ powershell -ExecutionPolicy Bypass -File scripts/check-terminal-api-boundary.ps1
 ## 打包资源进去
 
 ```powershell
-cls;.\gradlew.bat processResources; .\gradlew.bat runIde 
+cls;.\gradlew.bat processResources; .\gradlew.bat runIde
+
+.\gradlew.bat buildPlugin
+
+## \build\distributions\dev-workspace-0.1.0-SNAPSHOT.zip
+## D:\idea-workspace\java\idea-dev-workspace\Dev Workspace\build\distributions\dev-workspace-0.1.0-SNAPSHOT.zip
 ```
