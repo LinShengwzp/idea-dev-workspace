@@ -41,6 +41,12 @@
                 anchor="right"
                 factoryClass="com.anmi.devworkspace.library.ui.LibraryToolWindowFactory"
                 canCloseContents="false"/>
+        <toolWindow
+                id="Markmap"
+                anchor="right"
+                icon="/icons/markmap-icon.svg"
+                factoryClass="com.anmi.devworkspace.markmap.MarkmapToolWindowFactory"
+                canCloseContents="false"/>
     </extensions>
 
     <!-- Action System resolves action.<full-id>.* from this bundle for Tools, Find Action, Keymap, and context menus. -->
@@ -63,6 +69,12 @@
         <action
                 id="DevWorkspace.AddProjectFilesToLibrary"
                 class="com.anmi.devworkspace.library.actions.AddProjectFilesToLibraryAction">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action
+                id="com.anmi.devworkspace.markmap.openPreview"
+                class="com.anmi.devworkspace.markmap.OpenMarkmapPreviewAction">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
     </actions>
