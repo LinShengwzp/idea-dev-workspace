@@ -20,6 +20,7 @@ dependencies {
 
     intellijPlatform {
         intellijIdea("2026.2")
+        bundledPlugin("com.intellij.modules.jcef")
         bundledPlugin("org.jetbrains.plugins.terminal")
         testFramework(TestFrameworkType.Platform)
     }
