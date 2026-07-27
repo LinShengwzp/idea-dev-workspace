@@ -45,3 +45,9 @@ powershell -ExecutionPolicy Bypass -File scripts/check-terminal-api-boundary.ps1
 ```
 
 常规 Gradle 构建不会调用 npm。
+
+## 打包资源进去
+
+```powershell
+cls;.\gradlew.bat processResources; .\gradlew.bat runIde 
+```

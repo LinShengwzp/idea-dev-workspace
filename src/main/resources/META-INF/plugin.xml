@@ -34,17 +34,19 @@
         <toolWindow
                 id="Dev Tasks"
                 anchor="right"
+                icon="/icons/devTasks.svg"
                 factoryClass="com.anmi.devworkspace.ui.DevTasksToolWindowFactory"
                 canCloseContents="false"/>
         <toolWindow
                 id="Dev Library"
                 anchor="right"
+                icon="/icons/devLibrary.svg"
                 factoryClass="com.anmi.devworkspace.library.ui.LibraryToolWindowFactory"
                 canCloseContents="false"/>
         <toolWindow
                 id="Markmap"
                 anchor="right"
-                icon="/icons/markmap-icon.svg"
+                icon="/icons/markmap.svg"
                 factoryClass="com.anmi.devworkspace.markmap.MarkmapToolWindowFactory"
                 canCloseContents="false"/>
     </extensions>
