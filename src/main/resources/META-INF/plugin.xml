@@ -15,6 +15,18 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="Dev Workspace Library" displayType="BALLOON"/>
+        <applicationConfigurable
+                id="com.anmi.devworkspace.settings"
+                parentId="tools"
+                instance="com.anmi.devworkspace.settings.DevWorkspaceSettingsConfigurable"
+                bundle="messages.DevWorkspaceBundle"
+                key="settings.devworkspace.name"/>
+        <applicationConfigurable
+                id="com.anmi.devworkspace.settings.markmap"
+                parentId="com.anmi.devworkspace.settings"
+                instance="com.anmi.devworkspace.markmap.settings.MarkmapConfigurable"
+                bundle="messages.DevWorkspaceBundle"
+                key="settings.markmap.name"/>
         <projectService
                 serviceInterface="com.anmi.devworkspace.terminal.TerminalGateway"
                 serviceImplementation="com.anmi.devworkspace.terminal.idea262.Idea262TerminalGateway"/>
