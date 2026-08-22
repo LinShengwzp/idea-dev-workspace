@@ -49,6 +49,12 @@
                 icon="/icons/markmap.svg"
                 factoryClass="com.anmi.devworkspace.markmap.MarkmapToolWindowFactory"
                 canCloseContents="false"/>
+        <toolWindow
+                id="Server Monitor"
+                anchor="right"
+                icon="/icons/serverMonitor.svg"
+                factoryClass="com.anmi.devworkspace.servermonitor.ui.ServerMonitorToolWindowFactory"
+                canCloseContents="false"/>
     </extensions>
 
     <!-- Action System resolves action.<full-id>.* from this bundle for Tools, Find Action, Keymap, and context menus. -->

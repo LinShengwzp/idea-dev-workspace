@@ -1,7 +1,9 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.1.10"
     id("org.jetbrains.changelog")
     id("org.jetbrains.intellij.platform")
 }
@@ -19,10 +21,14 @@ dependencies {
     testImplementation(kotlin("test"))
 
     intellijPlatform {
-        intellijIdea("2026.2")
+        intellijIdea("2026.2") {
+            type = IntelliJPlatformType.IntellijIdeaUltimate
+        }
         bundledPlugin("com.intellij.modules.jcef")
         bundledPlugin("org.jetbrains.plugins.terminal")
+        bundledPlugin("intellij.ssh.plugin")
         testFramework(TestFrameworkType.Platform)
+        testBundledModule("com.intellij.modules.ultimate")
     }
 }
 
