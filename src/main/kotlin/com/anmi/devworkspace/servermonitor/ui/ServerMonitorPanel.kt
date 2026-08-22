@@ -57,8 +57,8 @@ import javax.swing.RowFilter
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
+import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
-import javax.swing.table.DefaultTableModel
 import javax.swing.table.TableRowSorter
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
@@ -77,6 +77,7 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
         tableHeader.setReorderingAllowed(false)
         tableHeader.setResizingAllowed(true)
         setDefaultRenderer(Any::class.java, ServerTableCellRenderer())
+        emptyText.text = DevWorkspaceBundle.message("servermonitor.table.empty.servers")
         columnModel.getColumn(0).minWidth = 160
         columnModel.getColumn(0).preferredWidth = 160
         columnModel.getColumn(1).minWidth = 80
@@ -100,6 +101,7 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
         rowHeight = 28
         tableHeader.setReorderingAllowed(false)
         tableHeader.setResizingAllowed(true)
+        emptyText.text = DevWorkspaceBundle.message("servermonitor.table.empty.processes")
         setDefaultRenderer(Any::class.java, ProcessTableCellRenderer())
         columnModel.getColumn(0).minWidth = 60
         columnModel.getColumn(0).preferredWidth = 60
@@ -122,14 +124,18 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
     private val autoRefreshAction = AutoRefreshAction()
 
     private val serverComboBox = ComboBox<ServerConfig>().apply {
-        renderer = object : ColoredListCellRenderer<ServerConfig>() {
+        renderer = object : ColoredListCellRenderer<ServerConfig?>() {
             override fun customizeCellRenderer(
-                list: javax.swing.JList<out ServerConfig>,
-                value: ServerConfig,
+                list: javax.swing.JList<out ServerConfig?>,
+                value: ServerConfig?,
                 index: Int,
                 selected: Boolean,
                 hasFocus: Boolean,
             ) {
+                if (value == null) {
+                    append(if (index == -1) "" else DevWorkspaceBundle.message("servermonitor.combo.empty"))
+                    return
+                }
                 append(value.name)
                 if (!value.enabled) append(" (disabled)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
@@ -196,7 +202,13 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
             add(statusPanel, BorderLayout.SOUTH)
         })
 
-        // Initialize server combo box and select first server
+        // Initialize server combo box and server table with placeholder data to avoid "Nothing to show"
+        run {
+            val all = settings.getServers()
+            if (all.isNotEmpty()) {
+                serverTableModel.setServers(all)
+            }
+        }
         updateServerComboBox()
 
         // Add selection listener for server table (after table is fully initialized)
@@ -294,12 +306,12 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
     private fun refreshProcesses() {
         val serverId = selectedServerId ?: return
         val server = settings.getServers().find { it.id == serverId } ?: return
-        
+
         scope.launch {
             val executor = SshExecutor(server)
             val collector = MetricsCollector(executor)
             val processes = collector.collectProcesses()
-            
+
             withContext(Dispatchers.EDT) {
                 processTableModel.updateData(processes)
             }
@@ -430,9 +442,7 @@ class ServerMonitorPanel(private val project: Project) : SimpleToolWindowPanel(t
     }
 }
 
-class ServerTableModel : DefaultTableModel(
-    arrayOf("", "", "", "", "", "", "", ""), 0
-) {
+class ServerTableModel : AbstractTableModel() {
     private val columnNames = arrayOf(
         DevWorkspaceBundle.message("servermonitor.column.server"),
         DevWorkspaceBundle.message("servermonitor.column.cpu"),
@@ -475,6 +485,23 @@ class ServerTableModel : DefaultTableModel(
                 load15 = metrics.loadAverage15m,
                 isHealthy = metrics.isHealthy,
                 error = metrics.error
+            )
+        }.toMutableList()
+        fireTableDataChanged()
+    }
+
+    fun setServers(servers: List<com.anmi.devworkspace.servermonitor.domain.ServerConfig>) {
+        data = servers.map { server ->
+            ServerRowData(
+                serverName = server.name,
+                cpuUsage = null,
+                memoryUsage = null,
+                diskUsage = null,
+                load1 = null,
+                load5 = null,
+                load15 = null,
+                isHealthy = false,
+                error = null
             )
         }.toMutableList()
         fireTableDataChanged()
@@ -550,9 +577,7 @@ class ServerTableCellRenderer : DefaultTableCellRenderer() {
     }
 }
 
-class ProcessTableModel : DefaultTableModel(
-    arrayOf("", "", "", "", ""), 0
-) {
+class ProcessTableModel : AbstractTableModel() {
     private val columnNames = arrayOf(
         DevWorkspaceBundle.message("servermonitor.process.column.pid"),
         DevWorkspaceBundle.message("servermonitor.process.column.user"),
